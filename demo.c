@@ -77,7 +77,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	$(window)->enableMaximize(FALSE); /* Disable its maximize box */
 	$(ansInput)->setNumOnly(TRUE); /* Set the textbox to accept only numbers */
 	$(checkAnsButton)->setOnClick((ButtonCallback)&checkAnsBtnOnClick, (void*)buttonContext, ASYNC); /* Set an asynchronous onClick event
-																										for the "check answer" button */
+														for the "check answer" button */
 	for (i = 0; i < NUMBUTTONS; i++){ /* Add the 10 number buttons */
 		numberButtons[i] = newButton(hInstance, buttonTexts[i], 40, 40, 10 + i * 40, 60); /* Create a button */
 		$(numberButtons[i])->setOnClick(&numBtnOnClick, (void*)ansInput, SYNC); /* Set a synchronous onClick event for the button */
