@@ -3,6 +3,7 @@
 #include "tinyGUI/tinyGUI.h" /* Add tinyGUI to the project */
 
 #define NUMBUTTONS 10 /* The number of the number buttons */
+#define TASKLENGTH 27 /* The maximum length of the task text */
 
 void numBtnOnClick(Button sender, void *context, MouseEventArgs e){ /* The number buttons' onClick event handler */
 	TextBox textbox = (TextBox)context;
@@ -24,13 +25,13 @@ void numBtnOnClick(Button sender, void *context, MouseEventArgs e){ /* The numbe
 
 int setTask(Label task){ /* Sets a new random task in a label */
 	int numA, numB;
-	char newText[27];
+	char newText[TASKLENGTH];
 
 	srand((unsigned int)GetTickCount()); /* Generate 2 random numbers from 0 to 12 */
 	numA = rand() % 13;
 	numB = rand() % 13;
 
-	sprintf_s(newText, 27, "%d MULTIPLY BY %d EQUALS", numA, numB);
+	sprintf_s(newText, TASKLENGTH, "%d MULTIPLY BY %d EQUALS", numA, numB);
 
 	$(task)->setText(newText); /* Set the label's text to the new task */
 	return numA * numB; /* return the task's solution */
@@ -72,7 +73,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	firstTaskAnswer = setTask(task); /* Get the answer to the first random task */
 	buttonContext[3] = (void*)&firstTaskAnswer; /* And add it to the context for the "check answer" button onClick event */
 
-	$(window)->setResizable(FALSE); /* Disable resizing the window */ $(window)->enableMaximize(FALSE); /* Disable its maximize box */
+	$(window)->setResizable(FALSE); /* Disable resizing the window */ 
+	$(window)->enableMaximize(FALSE); /* Disable its maximize box */
 	$(ansInput)->setNumOnly(TRUE); /* Set the textbox to accept only numbers */
 	$(checkAnsButton)->setOnClick((ButtonCallback)&checkAnsBtnOnClick, (void*)buttonContext, ASYNC); /* Set an asynchronous onClick event
 																										for the "check answer" button */
@@ -82,7 +84,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		$(window)->addButton(numberButtons[i]); /* Add the button to the window */
 	}
 
-	$(window)->addLabel(header); /* Add the header label to the window */ $(window)->addLabel(task); /* Add the task label to the window */
+	$(window)->addLabel(header); /* Add the header label to the window */ 
+	$(window)->addLabel(task); /* Add the task label to the window */
 	$(window)->addTextBox(ansInput); /* Add the answer input textbox to the window */
 	$(window)->addButton(checkAnsButton); /* Add the "check answer" button to the window */
 
