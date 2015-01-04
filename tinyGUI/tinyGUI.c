@@ -1,52 +1,5 @@
 #include "tinyGUI.h"
 
-#define checkedDereference(pointer) if (!pointer) return NULL; *pointer
-
-/* =============================================THE INHERITANCE MECHANISM================================================== */
-
-/* Sets the pointers of an instance of a type derived from GUIObject to be the same as the ones of its base type value */
-#define inheritFromGUIObject(object) object->base->derived = (void*)object; \
-	/* "Inherit" from base type */ \
-	object->criticalSection = object->base->criticalSection; object->origProcPtr = object->base->origProcPtr; \
-	object->handle = object->base->handle; object->moduleInstance = object->base->moduleInstance; \
-	object->className = object->base->className; \
-	object->ID = object->base->ID; object->styles = object->base->styles; object->exStyles = object->base->exStyles; \
-	object->type = object->base->type; \
-	/* event handlers */ object->events = object->base->events; object->numEvents = object->base->numEvents; \
-	object->setEvent = object->base->setEvent; object->setEventT = object->base->setEventT; \
-	/* properties */ object->text = object->base->text; \
-	object->width = object->base->width; object->height = object->base->height; \
-	object->x = object->base->x; object->y = object->base->y; object->enabled = object->base->enabled; \
-	/* links */ object->parent = object->base->parent; object->children = object->base->children; \
-	object->numChildren = object->base->numChildren; \
-	/* methods */ object->setPos = object->base->setPos; object->setPosT = object->base->setPosT; \
-	object->setSize = object->base->setSize; object->setSizeT = object->base->setSizeT; \
-	object->setText = object->base->setText; object->setTextT = object->base->setTextT; \
-	object->setEnabled = object->base->setEnabled; object->setEnabledT = object->base->setEnabledT;
-
-/* Sets the pointers of an instance inherited from the Control type to be the same as the ones of its base type value */
-#define inheritFromControl(object)	object->base->derived = (void*)object; \
-	/* "Inherit" from base type */ \
-	object->criticalSection = object->base->criticalSection; object->origProcPtr = object->base->origProcPtr; \
-	object->handle = object->base->handle; object->moduleInstance = object->base->moduleInstance; \
-	object->className = object->base->className; \
-	object->ID = object->base->ID; object->styles = object->base->styles; object->exStyles = object->base->exStyles; \
-	object->type = object->base->type; \
-	/* event handlers */ object->events = object->base->events; object->numEvents = object->base->numEvents; \
-	object->setEvent = object->base->setEvent; object->setEventT = object->base->setEventT; \
-	/* properties */ object->text = object->base->text; \
-	object->width = object->base->width; object->height = object->base->height; \
-	object->x = object->base->x; object->y = object->base->y; object->enabled = object->base->enabled; \
-	/* links */ object->parent = object->base->parent; object->children = object->base->children; \
-	object->numChildren = object->base->numChildren; \
-	/* methods */ object->addChild = object->base->addChild; object->addChildT = object->base->addChildT; \
-	object->addButton = object->base->addButton; object->addButtonT = object->base->addButtonT; \
-	object->setPos = object->base->setPos; object->setPosT = object->base->setPosT; \
-	object->setSize = object->base->setSize; object->setSizeT = object->base->setSizeT; \
-	object->setText = object->base->setText; object->setTextT = object->base->setTextT; \
-	object->setEnabled = object->base->setEnabled; object->setEnabledT = object->base->setEnabledT;
-
-
 /* =====================================================Thread synchronization================================================================= */
 /* Get ownership of a mutex. Used in thread synchronization for accessing shared global context */
 static HANDLE getMutexOwnership(char *mutexName){
@@ -54,7 +7,7 @@ static HANDLE getMutexOwnership(char *mutexName){
 	DWORD mutexWaitResult;
 	mutex = CreateMutexA(NULL, FALSE, mutexName); /* Create named mutex or get a handle to it if it exists */
 	
-	if (mutex == NULL)
+	if (!mutex)
 		return NULL;
 
 	mutexWaitResult = WaitForSingleObject(mutex, 0); /* Check mutex status */
@@ -107,109 +60,336 @@ void setCurrentThis(void *self){
 }
 
 
-/* =============================================THE OBJECT METHODS========================================================= */
+/* ============================================OTHER======================================================================= */
+/* Quickly get the number of symbols in the decimal representation of a number. */
+static int getNumLength(unsigned int x) {
+    if(x>=1000000000) return 10; if(x>=100000000) return 9; if(x>=10000000) return 8; if(x>=1000000) return 7;
+    if(x>=100000) return 6; if(x>=10000) return 5; if(x>=1000) return 4; if(x>=100) return 3; if(x>=10) return 2;
+    return 1;
+}
 
-/*---------------------------------------------GUIObject class--------------------------------------------------------------*/
-/* Moves an object to a new location specified by x and y. Not thread-safe */
-static BOOL setPos(struct _guiobject* object, int x, int y){
-	*object->x = x;
-	*object->y = y;
-	if (!SetWindowPos(*object->handle, NULL, x, y, *object->width, *object->height, SWP_NOSIZE | SWP_ASYNCWINDOWPOS | 
-																					SWP_DRAWFRAME))
+
+
+/* ======================================================Class Object============================================================================= */
+/* -------------------------------------------------The Constructor-------------------------------------------------------------------------------*/
+struct _object *newObject(){
+	struct _object *object = (struct _object*)malloc(sizeof(struct _object));
+
+	if (!object)
+		return NULL;
+
+	/* Set the fields */
+	object->criticalSection = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
+	if (!object->criticalSection) return NULL; InitializeCriticalSection(object->criticalSection);
+
+	safeInit(object->type, enum _objectType, GUIOBJECT);
+
+	return object;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteObject(struct _object *object){
+	if (object->criticalSection) DeleteCriticalSection(object->criticalSection);
+	free(object->criticalSection);
+	free(object->type);
+
+	free(object);
+}
+
+
+
+
+
+/* ======================================================Class GUIObject=========================================================================== */
+/* -------------------------------------------------The Methods---------------------------------------------------------------------------------*/
+/* Adds a child object to a GUIObject */
+static BOOL addChild(struct _guiobject *object, struct _guiobject *child){
+	struct _guiobject **newChildrenPointer;
+	unsigned int i;
+
+	if (!object)
 		return FALSE;
+
+	*child->parent = object;
+
+	if (*object->children != NULL)
+		for (i = 0; i < *object->numChildren; i++)
+			if ((*object->children)[i] == NULL){
+				(*object->children)[i] = child;
+				return TRUE;
+			}
+
+
+	(*object->numChildren)++;
+	newChildrenPointer = (struct _guiobject**)realloc(*object->children, *object->numChildren * sizeof(struct _guiobject*));
+
+	if (!newChildrenPointer)
+		return FALSE;
+
+	*object->children = newChildrenPointer;
+	(*object->children)[*object->numChildren - 1] = child;
 
 	return TRUE;
 }
 
-/* Moves an object specified in the thread's context (the self-reference mechanism) to a new location specified by x
-   and y. Not thread-safe */
-static BOOL setObjectPosSelfRef(int x, int y){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setPos((struct _guiobject*)currentThisLocal, x, y);
-	else
-		return FALSE;
+/* Adds a child object to the current object specified in the thread's context (the self-reference mechanism) */
+static BOOL addChildSelfRef(struct _guiobject *child){
+	return addChild((struct _guiobject*)getCurrentThis(), child);
 }
 
-/* Resizes an object to a new size specified by width and height. Not thread-safe */
-static BOOL setSize(struct _guiobject* object, int width, int height){*object->width = width;
-	*object->height = height;
-	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, width, height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
-																					SWP_DRAWFRAME))
+/* Removes a child object from a GUIObject */
+static BOOL removeChild(struct _guiobject *object, struct _guiobject *child){
+	unsigned int i;
+
+	if (!object)
 		return FALSE;
 
-	return TRUE;
+	*child->parent = object;
+
+	if (*object->children != NULL)
+		for (i = 0; i < *object->numChildren; i++)
+			if ((*object->children)[i] == child){
+				(*object->children)[i] = NULL;
+				return TRUE;
+			}
+
+	return FALSE;
 }
 
-/* Resizes an object specified in the thread's context (the self-reference mechanism) to a new size specified by width
-   and height. Not thread-safe */
-static BOOL setObjectSizeSelfRef(int width, int height){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setSize((struct _guiobject*)currentThisLocal, width, height);
-	else
-		return FALSE;
+/* Removes a child object from the current object specified in the thread's context (the self-reference mechanism) */
+static BOOL removeChildSelfRef(struct _guiobject *child){
+	return addChild((struct _guiobject*)getCurrentThis(), child);
 }
 
-/* Sets an event for an object by a Windows message. Not thread-safe */
-static BOOL setEvent(struct _guiobject *object, DWORD message, void(*callback)(void*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
+/* Sets an event for a GUIObject by a Windows message */
+static int setEvent(struct _guiobject *object, DWORD message, void(*callback)(struct _guiobject*, void*, struct _eventargs*),
+					 void *context, enum _syncMode mode){
 	struct _event *tempReallocPointer;
 	unsigned int i;
-	void *sender;
 
-	switch(*object->type){
-		case WINDOW:
-			sender = object->derived;
-			break;
-		case CONTROL:
-			sender = object->derived;
-			break;
-		case BUTTON:
-			sender = ((struct _control*)object->derived) != NULL ? ((struct _control*)object->derived)->derived : NULL;
-			break;
-		default:
-			sender = (void*)object;
-	}
+	if (!object)
+		return -1;
 
 	for (i = 0; i < *object->numEvents; i++)
 		if  ((*object->events)[i].message == message){
-			(*object->events)[i].eventFunction = callback;
-			(*object->events)[i].sender = sender;
-			(*object->events)[i].context = context;
-			(*object->events)[i].mode = mode;
-			return TRUE;
+			(*object->events)[i].eventFunction = callback; (*object->events)[i].mode = mode;
+			(*object->events)[i].sender = object; (*object->events)[i].context = context;
+			(*object->events)[i].condition = NULL; (*object->events)[i].interrupt = FALSE;
+			(*object->events)[i].enabled = TRUE;
+			return (int)i;
 		}
 
 	(*object->numEvents)++;
 	tempReallocPointer = (struct _event*)realloc(*object->events, *object->numEvents * sizeof(struct _event));
-	if (!tempReallocPointer){
-		return FALSE;
-	}
+	if (!tempReallocPointer)
+		return -1;
 
 	*object->events = tempReallocPointer;
-	/* Problem: why can't I access the newly allocated events as object->event[i]->field? */
-	(*object->events)[*object->numEvents - 1].message = message;
-	(*object->events)[*object->numEvents - 1].eventFunction = callback;
-	(*object->events)[*object->numEvents - 1].sender = sender;
-	(*object->events)[*object->numEvents - 1].context = context;
-	(*object->events)[*object->numEvents - 1].mode = mode;
+	switch(message){
+	case WM_MOUSEMOVE: case WM_MOUSEHOVER: case WM_MOUSELEAVE: case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_LBUTTONUP: 
+	case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
+			(*object->events)[i].args = (struct _eventargs*)newMouseEventArgs(message, 0, 0);
+			break;
+		default:
+			(*object->events)[i].args = newEventArgs(message, 0, 0);
+	}
+
+	(*object->events)[*object->numEvents - 1].eventFunction = callback; (*object->events)[*object->numEvents - 1].mode = mode;
+	(*object->events)[*object->numEvents - 1].message = message; (*object->events)[*object->numEvents - 1].sender = object;
+	(*object->events)[*object->numEvents - 1].context = context; (*object->events)[*object->numEvents - 1].condition = NULL;
+	(*object->events)[*object->numEvents - 1].interrupt = FALSE; (*object->events)[*object->numEvents - 1].enabled = TRUE;
+
+	return (int)(*object->numEvents - 1);
+}
+
+/* Sets an event for a GUIObject specified in the thread's context (the self-reference mechanism) on a Windows message */
+static int setEventSelfRef(DWORD message, void(*callback)(struct _guiobject*, void*, struct _eventargs*), void *context, enum _syncMode mode){
+	return setEvent((struct _guiobject*)getCurrentThis(), message, callback, context, mode);
+}
+
+/* Sets a condition for an event of a GUIObject */
+static BOOL setEventCondition(struct _guiobject *object, int eventID, BOOL *condition){
+	if (!object || eventID < 0 || (UINT)eventID >= *object->numEvents)
+		return FALSE;
+
+	(*object->events)[eventID].condition = condition;
+	return TRUE;
+}
+
+/* Sets a condition for an event of a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL setEventConditionSelfRef(int eventID, BOOL *condition){
+	return setEventCondition((struct _guiobject*)getCurrentThis(), eventID, condition);
+}
+
+/* Sets an interrupt state for an event of a GUIObject */
+static BOOL setEventInterrupt(struct _guiobject *object, int eventID, BOOL interrupt){
+	if (!object || eventID < 0 || (UINT)eventID >= *object->numEvents)
+		return FALSE;
+
+	(*object->events)[eventID].interrupt = interrupt;
+	return TRUE;
+}
+
+/* Sets an interrupt state for an event of a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL setEventInterruptSelfRef(int eventID, BOOL interrupt){
+	return setEventInterrupt((struct _guiobject*)getCurrentThis(), eventID, interrupt);
+}
+
+/* Changes an event's enabled state for a GUIObject */
+static BOOL setEventEnabled(struct _guiobject *object, int eventID, BOOL enabled){
+	if (!object || eventID < 0 || (UINT)eventID >= *object->numEvents)
+		return FALSE;
+
+	(*object->events)[eventID].enabled = enabled;
+	return TRUE;
+}
+
+/* Changes an event's enabled state for a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL setEventEnabledSelfRef(int eventID, BOOL enabled){
+	return setEventEnabled((struct _guiobject*)getCurrentThis(), eventID, enabled);
+}
+
+/* Sets a WM_LBUTTONUP event for an (enabled) object */
+static int setOnClick(struct _guiobject *object, void(*callback)(struct _guiobject*, void*, struct _eventargs*), void *context, enum _syncMode mode){
+	int eventID = setEvent(object, WM_LBUTTONUP, callback, context, mode);
+	return setEventCondition(object, eventID, object->enabled) ? eventID : -1;
+}
+
+/* Sets a WM_LBUTTONUP event for an (enabled) object specified in the thread's context (the self-reference mechanism) */
+static int setOnClickSelfRef(void(*callback)(struct _guiobject*, void*, struct _eventargs*), void *context, enum _syncMode mode){
+	return setOnClick((struct _guiobject*)getCurrentThis(), callback, context, mode);
+}
+
+/* Moves a GUIObject to a new location specified by x and y */
+static BOOL setPos(struct _guiobject *object, int x, int y){
+	if (!object)
+		return FALSE;
+
+	*object->x = x; *object->realX = x;
+	*object->y = y; *object->realY = y;
+	if (!SetWindowPos(*object->handle, NULL, x, y, *object->width, *object->height, SWP_NOSIZE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
+		return FALSE;
+
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
+		return FALSE;
 
 	return TRUE;
 }
 
-/* Sets an event for an object specified in the thread's context (the self-reference mechanism) on a Windows message. Not thread-safe */
-static BOOL setEventSelfRef(DWORD message, void(*callback)(void*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent((struct _guiobject*)currentThisLocal, message, callback, context, mode);
-	else
-		return FALSE;
+/* Moves a GUIObject specified in the thread's context (the self-reference mechanism) to a new location specified by x
+   and y */
+static BOOL setPosSelfRef(int x, int y){
+	return setPos((struct _guiobject*)getCurrentThis(), x, y);
 }
 
-/* Sets a new text for an object. Not thread-safe */
+/* Resizes a GUIObject to a new size specified by width and height */
+static BOOL setSize(struct _guiobject *object, int width, int height){
+	if (!object)
+		return FALSE;
+
+	*object->realWidth = width;
+	*object->realHeight = height;
+
+	if (width >= *object->minWidth && width <= *object->maxWidth)
+		*object->width = width;
+	if (height >= *object->minHeight && height <= *object->maxHeight)
+		*object->height = height;
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
+		return FALSE;
+
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Resizes a GUIObject specified in the thread's context (the self-reference mechanism) to a new size specified by width
+   and height */
+static BOOL setSizeSelfRef(int width, int height){
+	return setSize((struct _guiobject*)getCurrentThis(), width, height);
+}
+
+/* Sets a GUIObject's minimum size to a new value specified by minWidth and minHeight */
+static BOOL setMinSize(struct _guiobject *object, int minWidth, int minHeight){
+	if (!object)
+		return FALSE;
+
+	*object->minWidth = minWidth;
+	*object->minHeight = minHeight;
+
+	if (minWidth > *object->width){
+		*object->width = minWidth;
+		*object->realWidth = minWidth;
+	}
+
+	if (minHeight > *object->height){
+		*object->height = minHeight;
+		*object->realHeight = minHeight;
+	}
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
+		return FALSE;
+
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Sets the minimum size for a GUIObject specified in the thread's context (the self-reference mechanism) to a new value specified by minWidth
+   and minHeight */
+static BOOL setMinSizeSelfRef(int minWidth, int minHeight){
+	return setMinSize((struct _guiobject*)getCurrentThis(), minWidth, minHeight);
+}
+
+/* Sets a GUIObject's maximum size to a new value specified by maxWidth and maxHeight */
+static BOOL setMaxSize(struct _guiobject *object, int maxWidth, int maxHeight){
+	if (!object)
+		return FALSE;
+
+	*object->maxWidth = maxWidth;
+	*object->maxHeight = maxHeight;
+
+	if (maxWidth < *object->width){
+		*object->width = maxWidth;
+		*object->realWidth = maxWidth;
+	}
+
+	if (maxHeight < *object->height){
+		*object->height = maxHeight;
+		*object->realHeight = maxHeight;
+	}
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
+		return FALSE;
+
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Sets the maximum size for a GUIObject specified in the thread's context (the self-reference mechanism) to a new value specified by maxWidth
+   and maxHeight */
+static BOOL setMaxSizeSelfRef(int maxWidth, int maxHeight){
+	return setMaxSize((struct _guiobject*)getCurrentThis(), maxWidth, maxHeight);
+}
+
+/* Sets a new text for a GUIObject */
 static BOOL setText(struct _guiobject *object, char *text){
 	int textLength = strlen(text);
-	char *tempReallocPointer = (char*)realloc(*object->text, textLength + 1);
+	char *tempReallocPointer;
+	
+	if (!object)
+		return FALSE;
+
+	tempReallocPointer = (char*)realloc(*object->text, textLength + 1);
+
 	if (!tempReallocPointer)
 		return FALSE;
 	strcpy_s(tempReallocPointer, textLength + 1, text);
@@ -220,102 +400,332 @@ static BOOL setText(struct _guiobject *object, char *text){
 		return TRUE;
 }
 
-/* Sets a new text for an object specified in the thread's context (the self-reference mechanism). Not thread-safe */
+/* Sets a new text for a GUIObject specified in the thread's context (the self-reference mechanism) */
 static BOOL setTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText((struct _guiobject*)currentThisLocal, text);
-	else
-		return FALSE;
+	return setText((struct _guiobject*)getCurrentThis(), text);
 }
 
-/* Sets an object's enabled state. Not thread-safe */
+/* Sets a GUIObject's enabled state */
 static BOOL setEnabled(struct _guiobject *object, BOOL enabled){
-	return EnableWindow(*object->handle, enabled);
+	if (!object)
+		return FALSE;
+	*object->enabled = enabled;
+
+	if (*object->handle)
+		EnableWindow(*object->handle, enabled);
+	return TRUE;
 }
 
-/* Sets the enabled state for an object specified in the thread's context (the self-reference mechanism). Not thread-safe */
+/* Sets the enabled state for a GUIObject specified in the thread's context (the self-reference mechanism) */
 static BOOL setEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled((struct _guiobject*)currentThisLocal, enabled);
-	else
-		return FALSE;
+	return setEnabled((struct _guiobject*)getCurrentThis(), enabled);
 }
 
-
-/*---------------------------------------------Window class--------------------------------------------------------------*/
-/* Adds a control to a window (self-reference mechanism not used). Not thread-safe */
-static BOOL addChildToWindow(struct _window *thisWindow, struct _control *child){
-	struct _guiobject **newChildrenPointer;
-
-	*child->parent = thisWindow->base;
-	(*thisWindow->numChildren)++;
-	newChildrenPointer = (struct _guiobject**)realloc(*thisWindow->children, *thisWindow->numChildren * sizeof(struct _guiobject*));
-
-	if (newChildrenPointer == NULL)
+/* Draws a line in a GUIObject from the point specified by x1, y1 to the point specified by x2, y2 */
+static BOOL drawLine(struct _guiobject *object, struct _pen *pen, int x1, int y1, int x2, int y2){
+	HPEN prevPen = NULL;
+	POINT prevPoint;
+	if (!object || !pen)
 		return FALSE;
 
-	*thisWindow->children = newChildrenPointer;
-	(*thisWindow->children)[*thisWindow->numChildren - 1] = child->base;
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	if (!prevPen || !MoveToEx(*object->paintContext, x1, y1, &prevPoint))
+		return FALSE;
+	if (!LineTo(*object->paintContext, x2, y2))
+		return FALSE;
+	/* Restore previous values */
+	if (!MoveToEx(*object->paintContext, prevPoint.x, prevPoint.y, &prevPoint) || !SelectObject(*object->paintContext, prevPen))
+		return FALSE;
 
 	return TRUE;
 }
 
-/* Adds a control to the current window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL addChildToWindowSelfRef(struct _control *child){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return addChildToWindow((struct _window*)currentThisLocal, child);
-	else
+/* Draws a line in a GUIObject specified in the thread's context (the self-reference mechanism) from the point specified by
+   x1, y1 to the point specified by x2, y2 */
+static BOOL drawLineSelfRef(struct _pen *pen, int x1, int y1, int x2, int y2){
+	return drawLine((struct _guiobject*)getCurrentThis(), pen, x1, y1, x2, y2);
+}
+
+/* Draws an arc in a GUIObject */
+static BOOL drawArc(struct _guiobject *object, struct _pen *pen, int boundX1, int boundY1, int boundX2, int boundY2, int x1, int y1, int x2, int y2){
+	HPEN prevPen = NULL;
+	if (!object || !pen)
 		return FALSE;
-}
 
-/* Moves a window specified in the thread's context (the self-reference mechanism) to a new location specified by x 
-   and y. Not thread-safe */
-static BOOL setWindowPosSelfRef(int x, int y){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setPos(((struct _window*)currentThisLocal)->base, x, y);
-	else
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	if (!prevPen)
 		return FALSE;
-}
-
-/* Resizes a window specified in the thread's context (the self-reference mechanism) to a new size specified by width
-   and height. Not thread-safe */
-static BOOL setWindowSizeSelfRef(int width, int height){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setSize(((struct _window*)currentThisLocal)->base, width, height);
-	else
+	if (!Arc(*object->paintContext, boundX1, boundY1, boundX2, boundY2, x1, y1, x2, y2))
 		return FALSE;
-}
-
-/* Sets an event for a window specified in the thread's context (the self-reference mechanism) on a Windows message. Not thread-safe */
-static BOOL setEventForWindowSelfRef(DWORD message, void(*callback)(void*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent(((struct _window*)currentThisLocal)->base, message, callback, context, mode);
-	else
+	/* Restore previous values */
+	if (!SelectObject(*object->paintContext, prevPen))
 		return FALSE;
+
+	return TRUE;
 }
 
-/* Sets a WM_LBUTTONUP event for a window. Not thread-safe */
-static BOOL setOnClickForWindow(struct _window *object, void(*callback)(struct _window*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	return setEvent(object->base, WM_LBUTTONUP, (void(*)(void*, void*, struct _eventArgs*))callback, context, mode);
+/* Draws an arc in a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL drawArcSelfRef(struct _pen *pen, int boundX1, int boundY1, int boundX2, int boundY2, int x1, int y1, int x2, int y2){
+	return drawArc((struct _guiobject*)getCurrentThis(), pen, boundX1, boundY1, boundX2, boundY2, x1, y1, x2, y2);
 }
 
-/* Sets a WM_LBUTTONUP event for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setOnClickForWindowSelfRef(void(*callback)(struct _window*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent(((struct _window*)currentThisLocal)->base, WM_LBUTTONUP, (void(*)(void*, void*, struct _eventArgs*))callback,
-																						context, mode);
-	else
+/* Draws a rectangle in a GUIObject */
+static BOOL drawRect(struct _guiobject *object, struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, int boundX2, int boundY2){
+	HPEN prevPen = NULL;
+	HBRUSH prevBrush = NULL, activeBrush;
+	if (!object || !pen)
 		return FALSE;
+	if (!brush)
+		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
+	else
+		activeBrush = *brush->handle;
+
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	prevBrush = (HBRUSH)SelectObject(*object->paintContext, activeBrush);
+	if (!prevPen || !prevBrush)
+		return FALSE;
+	if (!Rectangle(*object->paintContext, boundX1, boundY1, boundX2, boundY2))
+		return FALSE;
+	/* Restore previous values */
+	if (!SelectObject(*object->paintContext, prevPen) || !SelectObject(*object->paintContext, prevBrush))
+		return FALSE;
+
+	return TRUE;
 }
 
-/* Changes a window's resizable style. Not thread-safe */
+/* Draws a rectangle in a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL drawRectSelfRef(struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, int boundX2, int boundY2){
+	return drawRect((struct _guiobject*)getCurrentThis(), pen, brush, boundX1, boundY1, boundX2, boundY2);
+}
+
+/* Draws a rounded rectangle in a GUIObject */
+static BOOL drawRoundedRect(struct _guiobject *object, struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, 
+							int boundX2, int boundY2, int ellipseWidth, int ellipseHeight){
+	HPEN prevPen = NULL;
+	HBRUSH prevBrush = NULL, activeBrush;
+	if (!object || !pen)
+		return FALSE;
+	if (!brush)
+		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
+	else
+		activeBrush = *brush->handle;
+
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	prevBrush = (HBRUSH)SelectObject(*object->paintContext, activeBrush);
+	if (!prevPen || !prevBrush)
+		return FALSE;
+	if (!RoundRect(*object->paintContext, boundX1, boundY1, boundX2, boundY2, ellipseWidth, ellipseHeight))
+		return FALSE;
+	/* Restore previous values */
+	if (!SelectObject(*object->paintContext, prevPen) || !SelectObject(*object->paintContext, prevBrush))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Draws a rounded rectangle in a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL drawRoundedRectSelfRef(struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, int boundX2, int boundY2, 
+								   int ellipseWidth, int ellipseHeight){
+	return drawRoundedRect((struct _guiobject*)getCurrentThis(), pen, brush, boundX1, boundY1, boundX2, boundY2, ellipseWidth, ellipseHeight);
+}
+
+/* Draws an ellipse in a GUIObject */
+static BOOL drawEllipse(struct _guiobject *object, struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, int boundX2, int boundY2){
+	HPEN prevPen = NULL;
+	HBRUSH prevBrush = NULL, activeBrush;
+	if (!object || !pen)
+		return FALSE;
+	if (!brush)
+		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
+	else
+		activeBrush = *brush->handle;
+
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	prevBrush = (HBRUSH)SelectObject(*object->paintContext, activeBrush);
+	if (!prevPen || !prevBrush)
+		return FALSE;
+	if (!Ellipse(*object->paintContext, boundX1, boundY1, boundX2, boundY2))
+		return FALSE;
+	/* Restore previous values */
+	if (!SelectObject(*object->paintContext, prevPen) || !SelectObject(*object->paintContext, prevBrush))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Draws an ellipse in a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL drawEllipseSelfRef(struct _pen *pen, struct _brush *brush, int boundX1, int boundY1, int boundX2, int boundY2){
+	return drawEllipse((struct _guiobject*)getCurrentThis(), pen, brush, boundX1, boundY1, boundX2, boundY2);
+}
+
+/* Draws a polygon in a GUIObject */
+static BOOL drawPolygon(struct _guiobject *object, struct _pen *pen, struct _brush *brush, int numPoints, LONG *coords){
+	HPEN prevPen = NULL;
+	HBRUSH prevBrush = NULL, activeBrush;
+	POINT *points = (POINT*)malloc(numPoints * sizeof(POINT));
+	int i;
+
+	if (!object || !pen || numPoints < 2)
+		return FALSE;
+	if (!brush)
+		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
+	else
+		activeBrush = *brush->handle;
+
+	for (i = 0; i < numPoints * 2; i+=2){
+		points[i / 2].x = coords[i];
+		points[i / 2].y = coords[i + 1];
+	}
+
+	prevPen = (HPEN)SelectObject(*object->paintContext, *pen->handle);
+	prevBrush = (HBRUSH)SelectObject(*object->paintContext, activeBrush);
+	if (!prevPen || !prevBrush)
+		return FALSE;
+	if (!Polygon(*object->paintContext, points, numPoints))
+		return FALSE;
+	/* Restore previous values */
+	if (!SelectObject(*object->paintContext, prevPen) || !SelectObject(*object->paintContext, prevBrush))
+		return FALSE;
+
+	return TRUE;
+}
+
+/* Draws a polygon in a GUIObject specified in the thread's context (the self-reference mechanism) */
+static BOOL drawPolygonSelfRef(struct _pen *pen, struct _brush *brush, int numPoints, LONG *coords){
+	return drawPolygon((struct _guiobject*)getCurrentThis(), pen, brush, numPoints, coords);
+}
+
+
+/* -------------------------------------------------The Constructor-------------------------------------------------------------------------------*/
+struct _guiobject *newGUIObject(HINSTANCE instance, char *text, int width, int height){
+	static HMENU ID = NULL;
+	struct _guiobject *object = (struct _guiobject*)malloc(sizeof(struct _guiobject));
+	int IDLength, textLength;
+
+	if (!object)
+		return NULL;
+
+	inheritFromObject(object, newObject());
+
+	/* Set the fields */
+
+	safeInit(object->origProcPtr, LONG_PTR, NULL);
+
+	safeInit(object->handle, HWND, NULL);
+	safeInit(object->moduleInstance, HINSTANCE, instance);
+
+	safeInit(object->paintContext, HDC, NULL);
+	object->paintData = (PAINTSTRUCT*)malloc(sizeof(PAINTSTRUCT)); if (!object->paintData) return NULL;
+
+	*object->type = GUIOBJECT;
+
+	EnterCriticalSection(object->criticalSection);
+
+	IDLength = getNumLength((unsigned int)ID);
+	object->className = (char**)malloc(sizeof(char*)); 
+	if(!object->className){ LeaveCriticalSection(object->criticalSection); return NULL; }
+	*object->className = (char*)malloc(IDLength + 1);
+
+	if (!*object->className){ LeaveCriticalSection(object->criticalSection); return NULL; }
+	sprintf_s(*object->className, IDLength + 1, "%d", ID);
+
+	object->ID = (HMENU*)malloc(sizeof(HMENU)); if(!object->ID){ LeaveCriticalSection(object->criticalSection); return NULL; } *object->ID = ID;
+	ID++;
+
+	LeaveCriticalSection(object->criticalSection);
+
+	safeInit(object->styles, DWORD, 0x00000000);
+	safeInit(object->exStyles, DWORD, 0x00000000);
+	
+	safeInit(object->numEvents, unsigned int, 1);
+	safeInit(object->events, struct _event*, malloc(*object->numEvents * sizeof(struct _event))); //TODO: add more events
+	if (!*object->events)
+		return NULL;
+	(*object->events)[0].eventFunction = NULL; (*object->events)[0].mode = SYNC; (*object->events)[0].message = WM_LBUTTONUP;
+	(*object->events)[0].sender = object; (*object->events)[0].context = NULL; (*object->events)[0].args = newEventArgs(WM_LBUTTONUP, 0, 0);
+	(*object->events)[0].condition = NULL; (*object->events)[0].interrupt = FALSE; (*object->events)[0].enabled = FALSE;
+
+	textLength = strlen(text);
+	safeInit(object->text, char*, malloc(textLength + 1));
+	if (!*object->text)
+		return NULL;
+	strcpy_s(*object->text, textLength + 1, text); /* Copy the object text to the heap */
+
+	safeInit(object->width, int, width); safeInit(object->height, int, height);
+	safeInit(object->realWidth, int, width); safeInit(object->realHeight, int, height);
+	safeInit(object->minWidth, int, 0); safeInit(object->minHeight, int, 0);
+	safeInit(object->maxWidth, int, INT_MAX); safeInit(object->maxHeight, int, INT_MAX);
+
+	safeInit(object->x, int, CW_USEDEFAULT); safeInit(object->y, int, CW_USEDEFAULT);
+	safeInit(object->realX, int, CW_USEDEFAULT); safeInit(object->realY, int, CW_USEDEFAULT);
+
+	safeInit(object->enabled, BOOL, TRUE);
+
+	safeInit(object->parent, struct _guiobject*, NULL);
+	safeInit(object->children, struct _guiobject**, NULL);
+	safeInit(object->numChildren, unsigned int, 0);
+	
+	/* Set the method pointers */
+	object->addChild = &addChildSelfRef; object->addChildT = &addChild; 
+	object->setEvent = &setEventSelfRef; object->setEventT = &setEvent;
+	object->setEventCondition = &setEventConditionSelfRef; object->setEventConditionT = &setEventCondition;
+	object->setEventInterrupt = &setEventInterruptSelfRef; object->setEventInterruptT = &setEventInterrupt;
+	object->setEventEnabled = &setEventEnabledSelfRef; object->setEventEnabledT = &setEventEnabled;
+	object->setOnClick = &setOnClickSelfRef; object->setOnClickT = &setOnClick;
+	object->setPos = &setPosSelfRef; object->setPosT = &setPos;
+	object->setSize = &setSizeSelfRef; object->setSizeT = &setSize;
+	object->setMinSize = &setMinSizeSelfRef; object->setMinSizeT = &setMinSize;
+	object->setMaxSize = &setMaxSizeSelfRef; object->setMaxSizeT = &setMaxSize;
+	object->setText = &setTextSelfRef; object->setTextT = &setText;
+	object->setEnabled = &setEnabledSelfRef; object->setEnabledT = &setEnabled;
+	object->drawLine = &drawLineSelfRef; object->drawLineT = &drawLine;
+	object->drawArc = &drawArcSelfRef; object->drawArcT = &drawArc;
+	//object->drawText = &drawText; object->drawTextT = &drawText; //TODO! Add fonts!
+	object->drawRect = &drawRectSelfRef; object->drawRectT = &drawRect;
+	object->drawRoundedRect = &drawRoundedRectSelfRef; object->drawRoundedRectT = &drawRoundedRect;
+	object->drawEllipse = &drawEllipseSelfRef; object->drawEllipseT = &drawEllipse;
+	object->drawPolygon = &drawPolygonSelfRef; object->drawPolygonT = &drawPolygon;
+
+	return object;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteGUIObject(struct _guiobject *object){
+	unsigned int i;
+	EndPaint(*object->handle, object->paintData);
+	DestroyWindow(*object->handle);
+
+	free(object->origProcPtr); free(object->handle); free(object->moduleInstance);
+	free(object->paintContext); free(object->paintData);
+	if (object->className)
+		free(*object->className);
+	free(object->className);
+	free(object->styles); free(object->exStyles); free(object->ID);
+	if (object->events){
+		for (i = 0; i < *object->numEvents; i++)
+			if ((*object->events)[i].args)
+				if (*(*object->events)[i].args->type == EVENTARGS)
+					deleteEventArgs((*object->events)[i].args);
+				else if (*(*object->events)[i].args->type == MOUSEEVENTARGS)
+					deleteMouseEventArgs((struct _mouseeventargs*)(*object->events)[i].args);
+		free(*object->events);
+	}
+	free(object->numEvents); free(object->events);
+	if (object->text)
+		free(*object->text);
+	free(object->text); free(object->width); free(object->height); free(object->x); free(object->y); free(object->enabled); free(object->parent);
+	free(object->children); free(object->numChildren);
+
+	deleteObject((struct _object*)object);
+}
+
+
+
+
+
+/* ======================================================Class Window============================================================================== */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Changes a window's resizable style */
 static BOOL setResizable(struct _window *window, BOOL resizable){
 	*window->resizable = resizable;
 	*window->styles = resizable ? (*window->styles) | WS_THICKFRAME : (*window->styles) ^ WS_THICKFRAME;
@@ -336,204 +746,235 @@ static BOOL setResizableSelfRef(BOOL resizable){
 		return FALSE;
 }
 
-/* Enables or disables a window's maximize box. Not thread-safe */
+/* Enables or disables a window's maximize box */
 static BOOL enableMaximize(struct _window *window, BOOL maximize){
-	if (window){
-		*window->maximizeEnabled = maximize;
-		*window->styles = maximize ? *window->styles | WS_MAXIMIZEBOX : *window->styles ^ WS_MAXIMIZEBOX;
-
-		if (*window->handle)
-			return SetWindowLongPtrA(*window->handle, GWL_STYLE, (LONG)(*window->styles)) ? TRUE : FALSE;
-		else
-			return TRUE;
-	} else
+	if (!window)
 		return FALSE;
+	*window->maximizeEnabled = maximize;
+	*window->styles = maximize ? *window->styles | WS_MAXIMIZEBOX : *window->styles ^ WS_MAXIMIZEBOX;
+
+	if (*window->handle)
+		return SetWindowLongPtrA(*window->handle, GWL_STYLE, (LONG)(*window->styles)) ? TRUE : FALSE;
+	else
+		return TRUE;
 }
 
 /* Enables or disables the maximize box for a window specified in the thread's context (the self-reference mechanism). 
    Not thread-safe */
 static BOOL enableMaximizeSelfRef(BOOL maximize){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return enableMaximize((struct _window*)currentThisLocal, maximize);
-	else
-		return FALSE;
-}
-
-/* Sets a new text for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setWindowTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText(((struct _window*)currentThisLocal)->base, text);
-	else
-		return FALSE;
-}
-
-/* Sets the enabled state for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setWindowEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled(((struct _window*)currentThisLocal)->base, enabled);
-	else
-		return FALSE;
+	return enableMaximize((struct _window*)getCurrentThis(), maximize);
 }
 
 
-/*---------------------------------------------Control class--------------------------------------------------------*/
-/* Adds a control to a window (self-reference mechanism not used). Not thread-safe */
-static BOOL addChildToControl(struct _control *thisControl, struct _control *child){
-	struct _guiobject **newChildrenPointer;
+/* -------------------------------------------------The Constructor-------------------------------------------------------------------------------*/
+struct _window *newWindow(HINSTANCE instance, char *text, int width, int height){
+	struct _window *window = (struct _window*)malloc(sizeof(struct _window));
 
-	*child->parent = thisControl->base;
-	(*thisControl->numChildren)++;
-	newChildrenPointer = (struct _guiobject**)realloc(*thisControl->children, 
-														*thisControl->numChildren * sizeof(struct _guiobject*));
+	if (!window)
+		return NULL;
 
-	if (newChildrenPointer == NULL)
+	inheritFromGUIObject(window, newGUIObject(instance, text, width, height));
+
+	/* Set the fields */
+	*window->type = WINDOW;
+	*window->styles = WS_OVERLAPPEDWINDOW;
+	*window->exStyles = WS_EX_WINDOWEDGE;
+	
+	safeInit(window->clientWidth, int, 0);
+	safeInit(window->clientHeight, int, 0);
+
+	safeInit(window->resizable, BOOL, TRUE);
+	safeInit(window->maximizeEnabled, BOOL, TRUE);
+
+	/* Set the method pointers */
+	window->setResizable = &setResizableSelfRef; window->setResizableT = &setResizable;
+	window->enableMaximize = &enableMaximizeSelfRef; window->enableMaximizeT = &enableMaximize;
+
+	return window;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteWindow(struct _window *window){
+	free(window->clientWidth); free(window->clientHeight); free(window->resizable); free(window->maximizeEnabled);
+	deleteGUIObject((struct _guiobject*)window);
+}
+
+
+
+
+
+/* ======================================================Class Control============================================================================= */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Moves a GUIObject to a new location specified by x and y */
+/* Overrides setPosT in GUIObject */
+static BOOL _control_setPos(struct _guiobject *object, int x, int y){
+	if (!object)
+		return FALSE;
+	
+	*object->realX = x;
+	*object->realY = y;
+
+	if (x >= *((struct _control*)object)->minX && x <= *((struct _control*)object)->maxX)
+		*object->x = x;
+	if (y >= *((struct _control*)object)->minY && y <= *((struct _control*)object)->maxY)
+		*object->y = y;
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOSIZE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
 		return FALSE;
 
-	*thisControl->children = newChildrenPointer;
-	(*thisControl->children)[*thisControl->numChildren - 1] = child->base;
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
+		return FALSE;
 
 	return TRUE;
 }
 
-/* Adds a control to the current control specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL addChildToControlSelfRef(struct _control *child){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return addChildToControl((struct _control*)currentThisLocal, child);
-	else
+/* Moves a GUIObject specified in the thread's context (the self-reference mechanism) to a new location specified by x
+   and y */
+/* Overrides setPos in GUIObject */
+static BOOL _control_setPosSelfRef(int x, int y){
+	return _control_setPos((struct _guiobject*)getCurrentThis(), x, y);
+}
+
+/* Sets a control's minimum position to a new value specified by minX and minY */
+static BOOL setMinPos(struct _control* object, int minX, int minY){
+	if (!object)
 		return FALSE;
-}
 
-/* Adds a button to a window (self-reference mechanism not used). Not thread-safe */
-static BOOL addButtonToControl(struct _control *thisControl, struct _button *child){
-	return addChildToControl(thisControl, child->base);
-}
+	*object->minX = minX;
+	*object->minY = minY;
 
-/* Adds a button to the current window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL addButtonToControlSelfRef(struct _button *child){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return addButtonToControl((struct _control*)currentThisLocal, child);
-	else
+	if (minX > *object->x){
+		*object->x = minX;
+		*object->realX = minX;
+	}
+
+	if (minY > *object->y){
+		*object->y = minY;
+		*object->realY = minY;
+	}
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
 		return FALSE;
-}
 
-/* Moves a control specified in the thread's context (the self-reference mechanism) to a new location specified by x
-   and y. Not thread-safe */
-static BOOL setControlPosSelfRef(int x, int y){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setPos(((struct _control*)currentThisLocal)->base, x, y);
-	else
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
 		return FALSE;
+
+	return TRUE;
 }
 
-/* Resizes a control specified in the thread's context (the self-reference mechanism) to a new size specified by width
-   and height. Not thread-safe */
-static BOOL setControlSizeSelfRef(int width, int height){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setSize(((struct _control*)currentThisLocal)->base, width, height);
-	else
+/* Sets the minimum position for a control specified in the thread's context (the self-reference mechanism) to a new value specified by minX
+   and minY */
+static BOOL setMinPosSelfRef(int minWidth, int minHeight){
+	return setMinPos((struct _control*)getCurrentThis(), minWidth, minHeight);
+}
+
+/* Sets a control's maximum position to a new value specified by maxX and maxY */
+static BOOL setMaxPos(struct _control* object, int maxX, int maxY){
+	if (!object)
 		return FALSE;
-}
 
-/* Sets an event for a control specified in the thread's context (the self-reference mechanism) on a Windows message. Not thread-safe */
-static BOOL setEventForControlSelfRef(DWORD message, void(*callback)(void*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent(((struct _control*)currentThisLocal)->base, message, callback, context, mode);
-	else
+	*object->maxX = maxX;
+	*object->maxY = maxY;
+
+	if (maxX < *object->x){
+		*object->x = maxX;
+		*object->realX = maxX;
+	}
+
+	if (maxY < *object->y){
+		*object->y = maxY;
+		*object->realY = maxY;
+	}
+
+	if (!SetWindowPos(*object->handle, NULL, *object->x, *object->y, *object->width, *object->height, SWP_NOMOVE | SWP_ASYNCWINDOWPOS | 
+																					SWP_DRAWFRAME))
 		return FALSE;
-}
 
-/* Sets a new text for a control specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setControlTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText(((struct _control*)currentThisLocal)->base, text);
-	else
+	if (!InvalidateRect(*object->handle, NULL, FALSE))
 		return FALSE;
+
+	return TRUE;
 }
 
-/* Sets the enabled state for a control specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setControlEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled(((struct _control*)currentThisLocal)->base, enabled);
-	else
-		return FALSE;
-}
-
-
-/*---------------------------------------------Button class---------------------------------------------------------*/
-/* Moves a button specified in the thread's context (the self-reference mechanism) to a new location specified by x 
-   and y. Not thread-safe */
-static BOOL setButtonPosSelfRef(int x, int y){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setPos(((struct _button*)currentThisLocal)->base->base, x, y);
-	else
-		return FALSE;
-}
-
-/* Resizes a button specified in the thread's context (the self-reference mechanism) to a new size specified by width
-   and height. Not thread-safe */
-static BOOL setButtonSizeSelfRef(int width, int height){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setSize(((struct _button*)currentThisLocal)->base->base, width, height);
-	else
-		return FALSE;
-}
-
-/* Sets an event for a button specified in the thread's context (the self-reference mechanism) on a Windows message. Not thread-safe */
-static BOOL setEventForButtonSelfRef(DWORD message, void(*callback)(void*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent(((struct _button*)currentThisLocal)->base->base, message, callback, context, mode);
-	else
-		return FALSE;
-}
-
-/* Sets a BN_CLICKED event for a button. Not thread-safe */
-static BOOL setOnClickForButton(struct _button *object, void(*callback)(struct _button*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	return setEvent(object->base->base, BN_CLICKED, (void(*)(void*, void*, struct _eventArgs*))callback, context, mode);
-}
-
-/* Sets a BN_CLICKED event for a button specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setOnClickForButtonSelfRef(void(*callback)(struct _button*, void*, struct _eventArgs*), void *context, enum _syncMode mode){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEvent(((struct _button*)currentThisLocal)->base->base, BN_CLICKED, (void(*)(void*, void*, struct _eventArgs*))callback, context, mode);
-	else
-		return FALSE;
-}
-
-/* Sets a new text for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setButtonTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText(((struct _button*)currentThisLocal)->base->base, text);
-	else
-		return FALSE;
-}
-
-/* Sets the enabled state for a button specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setButtonEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled(((struct _button*)currentThisLocal)->base->base, enabled);
-	else
-		return FALSE;
+/* Sets the maximum position for a control specified in the thread's context (the self-reference mechanism) to a new value specified by maxX
+   and maxY */
+static BOOL setMaxPosSelfRef(int maxWidth, int maxHeight){
+	return setMaxPos((struct _control*)getCurrentThis(), maxWidth, maxHeight);
 }
 
 
-/*---------------------------------------------TextBox class---------------------------------------------------------*/
-/* Sets the text input mode for a textbox to number-only. Not thread-safe */
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _control *newControl(HINSTANCE instance, char *text, int width, int height, int x, int y){
+	struct _control *control = (struct _control*)malloc(sizeof(struct _control));
+
+	if (!control)
+		return NULL;
+
+	inheritFromGUIObject(control, newGUIObject(instance, text, width, height));
+	
+	safeInit(control->minX, int, INT_MIN); safeInit(control->minY, int, INT_MIN);
+	safeInit(control->maxX, int, INT_MAX); safeInit(control->maxY, int, INT_MAX);
+	safeInit(control->anchor, short, 0xFF00);
+
+	*control->type = CONTROL;
+	*control->x = x; *control->realX = x;
+	*control->y = y; *control->realY = y;
+	*control->exStyles = WS_EX_WINDOWEDGE;
+
+	/* Override virtual methods */
+	control->setPos = &_control_setPosSelfRef;
+	control->setPosT = &_control_setPos;
+	control->base.setPos = &_control_setPosSelfRef;
+	control->base.setPosT = &_control_setPos;
+	
+
+	control->setMinPos = &setMinPosSelfRef; control->setMinPosT = &setMinPos;
+	control->setMaxPos = &setMaxPosSelfRef; control->setMaxPosT = &setMaxPos;
+
+	return control;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteControl(struct _control *control){
+	deleteGUIObject((struct _guiobject*)control);
+}
+
+
+
+
+
+/* ======================================================Class Button============================================================================== */
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _button *newButton(HINSTANCE instance, char *text, int width, int height, int x, int y){
+	struct _button *button = (struct _button*)malloc(sizeof(struct _button));
+
+	if (!button)
+		return NULL;
+	inheritFromControl(button, newControl(instance, text, width, height, x, y));
+
+	*button->type = BUTTON;
+	free(*button->className);
+	*button->className = "Button";
+	*button->styles = WS_CHILD | WS_VISIBLE | BS_TEXT | BS_PUSHBUTTON;
+
+	return button;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteButton(struct _button *button){
+	*button->className = NULL;
+	deleteControl((struct _control*)button);
+}
+
+
+
+
+
+/* ======================================================Class TextBox============================================================================== */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Sets the text input mode for a textbox to number-only or to not number-only */
 static BOOL setNumOnly(struct _textbox* textbox, BOOL numOnly){
 	*textbox->numOnly = numOnly;
 	*textbox->styles = numOnly ? *textbox->styles | ES_NUMBER : *textbox->styles ^ ES_NUMBER;
@@ -547,418 +988,335 @@ static BOOL setNumOnly(struct _textbox* textbox, BOOL numOnly){
 /* Sets the text input mode for a textbox to number-only for a textbox specified in the thread's context (the self-reference mechanism). 
    Not thread-safe */
 static BOOL setNumOnlySelfRef(BOOL numOnly){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setNumOnly((struct _textbox*)currentThisLocal, numOnly);
-	else
-		return FALSE;
-}
-
-/* Sets a new text for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setTextBoxTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText(((struct _textbox*)currentThisLocal)->base->base, text);
-	else
-		return FALSE;
-}
-
-/* Sets the enabled state for a textbox specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setTextBoxEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled(((struct _textbox*)currentThisLocal)->base->base, enabled);
-	else
-		return FALSE;
+	return setNumOnly((struct _textbox*)getCurrentThis(), numOnly);
 }
 
 
-/*---------------------------------------------Label class---------------------------------------------------------*/
-/* Sets a new text for a window specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setLabelTextSelfRef(char *text){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setText(((struct _label*)currentThisLocal)->base->base, text);
-	else
-		return FALSE;
-}
 
-/* Sets the enabled state for a label specified in the thread's context (the self-reference mechanism). Not thread-safe */
-static BOOL setLabelEnabledSelfRef(BOOL enabled){
-	void *currentThisLocal = getCurrentThis();
-	if (currentThisLocal != NULL)
-		return setEnabled(((struct _label*)currentThisLocal)->base->base, enabled);
-	else
-		return FALSE;
-}
-
-
-/* ============================================OTHER======================================================================= */
-/* Quickly get the number of symbols in the decimal representation of a number. */
-static int getNumLength(unsigned int x) {
-    if(x>=1000000000) return 10; if(x>=100000000) return 9; if(x>=10000000) return 8; if(x>=1000000) return 7;
-    if(x>=100000) return 6; if(x>=10000) return 5; if(x>=1000) return 4; if(x>=100) return 3; if(x>=10) return 2;
-    return 1;
-}
-
-
-/* =============================================THE OBJECT CONSTRUCTORS==================================================== */
-
-/* Initialize a new instance of the Object type with a unique identifier. Thread-safe */
-struct _guiobject *newObject(HINSTANCE instance, char *text, int width, int height){
-	static HMENU ID = NULL;
-	struct _guiobject *object = (struct _guiobject*)malloc(sizeof(struct _guiobject));
-	int IDLength, textLength;
-
-	if (!object)
-		return NULL;
-
-	object->derived = NULL;
-
-	object->criticalSection = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
-	if (object->criticalSection) InitializeCriticalSection(object->criticalSection); else return NULL;
-
-	object->origProcPtr = (LONG_PTR*)malloc(sizeof(LONG_PTR)); checkedDereference(object->origProcPtr) = (LONG_PTR)NULL;
-
-	object->handle = (HWND*)malloc(sizeof(HWND)); checkedDereference(object->handle) = NULL;
-	object->moduleInstance = (HINSTANCE*)malloc(sizeof(HINSTANCE)); checkedDereference(object->moduleInstance) = instance;
-	object->type = (enum _objectType*)malloc(sizeof(enum _objectType)); checkedDereference(object->type) = OBJECT;
-
-	EnterCriticalSection(object->criticalSection);
-
-	IDLength = getNumLength((unsigned int)ID);
-	object->className = (char**)malloc(sizeof(char*)); checkedDereference(object->className) = (char*)malloc(IDLength + 1);
-	if (!*object->className){
-		LeaveCriticalSection(object->criticalSection);
-		return NULL;
-	}
-	sprintf_s(*object->className, IDLength + 1, "%d", ID);
-
-	object->ID = (HMENU*)malloc(sizeof(HMENU)); if(!object->ID){ LeaveCriticalSection(object->criticalSection); return NULL; } *object->ID = ID;
-	ID++;
-
-	LeaveCriticalSection(object->criticalSection);
-
-	object->styles = (DWORD*)malloc(sizeof(DWORD)); checkedDereference(object->styles) = 0x00000000;
-	object->exStyles = (DWORD*)malloc(sizeof(DWORD)); checkedDereference(object->exStyles) = 0x00000000;
-	
-	object->numEvents = (unsigned int*)malloc(sizeof(unsigned int)); checkedDereference(object->numEvents) = 1;
-	object->events = (struct _event**)malloc(sizeof(struct _event*));
-	checkedDereference(object->events) = (struct _event*)malloc(*object->numEvents * sizeof(struct _event)); //TODO: add more events
-	if (!*object->events)
-		return NULL;
-	object->events[0]->eventFunction = NULL; object->events[0]->mode = SYNC; object->events[0]->message = 0x00000000;
-												object->events[0]->sender = NULL; object->events[0]->context = NULL;
-
-	object->setEvent = &setEventSelfRef;
-	object->setEventT = &setEvent;
-
-	textLength = strlen(text);
-	object->text = (char**)malloc(sizeof(char*)); checkedDereference(object->text) = (char*)malloc(textLength + 1);
-	if (!*object->text)
-		return NULL;
-	strcpy_s(*object->text, textLength + 1, text); /* Copy the object text to the heap */
-
-	object->width = (int*)malloc(sizeof(int)); checkedDereference(object->width) = width;
-	object->height = (int*)malloc(sizeof(int)); checkedDereference(object->height) = height;
-
-	object->x = (int*)malloc(sizeof(int)); checkedDereference(object->x) = CW_USEDEFAULT;
-	object->y = (int*)malloc(sizeof(int)); checkedDereference(object->y) = CW_USEDEFAULT;
-
-	object->enabled = (BOOL*)malloc(sizeof(BOOL)); checkedDereference(object->enabled) = TRUE;
-
-	object->parent = (struct _guiobject**)malloc(sizeof(struct _guiobject*)); checkedDereference(object->parent) = NULL;
-	object->children = (struct _guiobject***)malloc(sizeof(struct _guiobject**)); checkedDereference(object->children) = NULL;
-	object->numChildren = (unsigned int*)malloc(sizeof(unsigned int)); checkedDereference(object->numChildren) = 0;
-
-	object->setPos = &setObjectPosSelfRef;
-	object->setPosT = &setPos;
-
-	object->setSize = &setObjectSizeSelfRef;
-	object->setSizeT = &setSize;
-
-	object->setText = &setTextSelfRef;
-	object->setTextT = &setText;
-
-	object->setEnabled = &setEnabledSelfRef;
-	object->setEnabledT = &setEnabled;
-
-	return object;
-}
-
-/* Initialize a new instance of the Window type */
-struct _window *newWindow(HINSTANCE instance, char *text, int width, int height){
-	struct _window *window = (struct _window*)malloc(sizeof(struct _window));
-
-	if (window == NULL)
-		return NULL;
-
-	window->base = newObject(instance, text, width, height);
-	if (!window->base)
-		return NULL;
-	inheritFromGUIObject(window);
-	window->derived = NULL;
-
-	*window->type = WINDOW;
-	*window->styles = WS_OVERLAPPEDWINDOW;
-	*window->exStyles = WS_EX_WINDOWEDGE;
-	
-	window->clientWidth = (int*)malloc(sizeof(int)); checkedDereference(window->clientWidth) = 0;
-	window->clientHeight = (int*)malloc(sizeof(int)); checkedDereference(window->clientHeight) = 0;
-
-	window->resizable = (BOOL*)malloc(sizeof(BOOL)); checkedDereference(window->resizable) = TRUE;
-	window->maximizeEnabled = (BOOL*)malloc(sizeof(BOOL)); checkedDereference(window->maximizeEnabled) = TRUE;
-
-	window->addChildT = &addChildToWindow;
-	window->addChild = &addChildToWindowSelfRef;
-
-	window->setEvent = &setEventForWindowSelfRef;
-
-	window->setOnClick = &setOnClickForWindowSelfRef;
-	window->setOnClickT = &setOnClickForWindow;
-
-	window->setPos = &setWindowPosSelfRef;
-	window->setSize = &setWindowSizeSelfRef;
-
-	window->setResizable = &setResizableSelfRef;
-	window->setResizableT = &setResizable;
-
-	window->enableMaximize = &enableMaximizeSelfRef;
-	window->enableMaximizeT = &enableMaximize;
-
-	window->setText = &setWindowTextSelfRef;
-
-	window->setEnabled = &setWindowEnabledSelfRef;
-
-	return window;
-}
-
-/* Initialize a new instance of the Control type */
-struct _control *newControl(HINSTANCE instance, char *text, int width, int height, int x, int y){
-	struct _control *control = (struct _control*)malloc(sizeof(struct _control));
-
-	if (control == NULL)
-		return NULL;
-
-	control->base = newObject(instance, text, width, height);
-	if (control->base == NULL)
-		return NULL;
-	inheritFromGUIObject(control);
-	control->derived = NULL;
-
-	*control->type = CONTROL;
-	*control->x = x;
-	*control->y = y;
-	*control->exStyles = WS_EX_WINDOWEDGE;
-
-	control->addChildT = &addChildToControl;
-	control->addChild = &addChildToControlSelfRef;
-	control->addButtonT = &addButtonToControl;
-	control->addButton = &addButtonToControlSelfRef;
-
-	control->setEvent = &setEventForControlSelfRef;
-
-	control->setPos = &setControlPosSelfRef;
-	control->setSize = &setControlSizeSelfRef;
-
-	control->setText = &setControlTextSelfRef;
-
-	control->setEnabled = &setControlEnabledSelfRef;
-
-	return control;
-}
-
-/* Initialize a new instance of the Button type */
-struct _button *newButton(HINSTANCE instance, char *text, int width, int height, int x, int y){
-	struct _button *button = (struct _button*)malloc(sizeof(struct _button));
-
-	if (button == NULL)
-		return NULL;
-
-	button->base = newControl(instance, text, width, height, x, y);
-	if (button->base == NULL)
-		return NULL;
-	inheritFromControl(button);
-	//button->derived = NULL;
-
-	*button->type = BUTTON;
-	free(*button->className);
-	*button->className = "Button"; //TODO: Place in heap, for destructor!
-	*button->styles = WS_CHILD | WS_VISIBLE | BS_TEXT | BS_PUSHBUTTON;
-
-	button->setPos = &setButtonPosSelfRef;
-	button->setSize = &setButtonSizeSelfRef;
-
-	button->setEvent = &setEventForButtonSelfRef;
-
-	button->setOnClick = &setOnClickForButtonSelfRef;
-	button->setOnClickT = &setOnClickForButton;
-
-	button->setText = &setButtonTextSelfRef;
-
-	button->setEnabled = &setButtonEnabledSelfRef;
-
-	return button;
-}
-
-/* Initialize a new instance of the TextBox type */
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
 struct _textbox *newTextBox(HINSTANCE instance, char *text, int width, int height, int x, int y, enum _textboxtype multiline){
 	struct _textbox *textbox = (struct _textbox*)malloc(sizeof(struct _textbox));
 
-	if (textbox == NULL)
+	if (!textbox)
 		return NULL;
 
-	textbox->base = newControl(instance, text, width, height, x, y);
-	if (textbox->base == NULL)
-		return NULL;
-	inheritFromControl(textbox);
-	//textbox->derived = NULL;
+	inheritFromControl(textbox, newControl(instance, text, width, height, x, y));
 
 	*textbox->type = TEXTBOX;
 	free(*textbox->className);
-	*textbox->className = "Edit"; //TODO: Place in heap, for destructor!
+	*textbox->className = "Edit";
 	*textbox->styles = WS_CHILD | WS_VISIBLE | WS_BORDER;
 
-	textbox->multiline = (BOOL*)malloc(sizeof(BOOL)); checkedDereference(textbox->multiline) = multiline;
+	safeInit(textbox->multiline, BOOL, multiline);
 	if (*textbox->multiline)
 		*textbox->styles |= ES_MULTILINE | ES_WANTRETURN;
 
-	textbox->numOnly = (BOOL*)malloc(sizeof(BOOL)); checkedDereference(textbox->numOnly) = FALSE;
+	safeInit(textbox->numOnly, BOOL, FALSE);
 
-	//TODO!
-	//textbox->setPos = &setTextBoxPosSelfRef;
-	//textbox->setSize = &setTextBoxSizeSelfRef;
-
-	//textbox->setEvent = &setEventForTextBoxSelfRef;
-
-	//textbox->setOnClick = &setOnClickForTextBoxSelfRef;
-	//textbox->setOnClickT = &setOnClickForTextBox;
-
-	textbox->setNumOnly = &setNumOnlySelfRef;
-	textbox->setNumOnlyT = &setNumOnly;
-
-	textbox->setText = &setTextBoxTextSelfRef;
-
-	textbox->setEnabled = &setTextBoxEnabledSelfRef;
+	textbox->setNumOnly = &setNumOnlySelfRef; textbox->setNumOnlyT = &setNumOnly;
 
 	return textbox;
 }
 
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteTextBox(struct _textbox *textbox){
+	*textbox->className = NULL;
+	deleteControl((struct _control*)textbox);
+}
+
+
+
+
+
+/* ======================================================Class Label=============================================================================== */
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
 struct _label *newLabel(HINSTANCE instance, char *text, int width, int height, int x, int y){
 	struct _label *label = (struct _label*)malloc(sizeof(struct _label));
 
-	if (label == NULL)
+	if (!label)
 		return NULL;
 
-	label->base = newControl(instance, text, width, height, x, y);
-	if (label->base == NULL)
-		return NULL;
-	inheritFromControl(label);
-	//label->derived = NULL;
+	inheritFromControl(label, newControl(instance, text, width, height, x, y));
 
 	*label->type = LABEL;
 	free(*label->className);
 	*label->className = "Static"; //TODO: Place in heap, for destructor!
-	*label->styles = WS_CHILD | WS_VISIBLE;
-
-	//TODO!
-	//label->setPos = &setLabelPosSelfRef;
-	//label->setSize = &setLabelSizeSelfRef;
-
-	//label->setEvent = &setEventForLabelSelfRef;
-
-	//label->setOnClick = &setOnClickForLabelSelfRef;
-	//label->setOnClickT = &setOnClickForLabel;
-
-	label->setText = &setLabelTextSelfRef;
-
-	label->setEnabled = &setLabelEnabledSelfRef;
+	*label->styles = WS_CHILD | WS_VISIBLE | SS_NOTIFY;
 
 	return label;
 }
 
-
-/* =============================================THE OBJECT DESTRUCTORS==================================================== */
-
-BOOL deleteObject(struct _guiobject *object){
-	if (!object)
-		return TRUE;
-
-	if (object->derived) 
-		return FALSE; /* A destructor cannot destroy a base type value of an object! (maybe add this functionality later?) */
-
-	if (object->criticalSection) DeleteCriticalSection(object->criticalSection);
-	free(object->criticalSection);
-
-	free(object->origProcPtr); free(object->handle); free(object->moduleInstance); free(object->type);
-	if (object->className)
-		free(*object->className);
-	free(object->className);
-	free(object->styles); free(object->exStyles); free(object->ID); free(object->numEvents);
-	if (object->events)
-		free(*object->events);
-	free(object->events);
-	if (object->text)
-		free(*object->text);
-	free(object->text); free(object->width); free(object->height); free(object->x); free(object->y); free(object->enabled); free(object->parent);
-	free(object->children); free(object->numChildren);
-	return TRUE;
-}
-
-BOOL deleteWindow(struct _window *window){
-	if (!deleteObject(window->base))
-		return FALSE;
-	free(window->clientWidth); free(window->clientHeight); free(window->resizable); free(window->maximizeEnabled);
-	return TRUE;
-}
-
-BOOL deleteControl(struct _control *control){
-	return deleteObject(control->base);
-}
-
-BOOL deleteButton(struct _button *button){
-	*button->className = NULL;
-	return deleteControl(button->base);
-}
-
-BOOL deleteTextBox(struct _textbox *textbox){
-	*textbox->className = NULL;
-	return deleteControl(textbox->base);
-}
-
-BOOL deleteLabel(struct _label *label){
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteLabel(struct _label *label){
 	*label->className = NULL;
-	return deleteControl(label->base);
+	deleteControl((struct _control*)label);
 }
 
 
-/* =============================================WINAPI CALL FUNCTIONS====================================================== */
+
+
+
+/* ======================================================Class EventArgs=========================================================================== */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Updates the value of an EventArgs object */
+static BOOL updateValue(struct _eventargs *eventargs, UINT message, WPARAM wParam, LPARAM lParam){
+	if (!eventargs)
+		return FALSE;
+
+	*eventargs->message = message;
+	*eventargs->wParam = wParam;
+	*eventargs->lParam = lParam;
+
+	return TRUE;
+}
+
+/* Updates the value of an EventArgs object specified in the thread's context (the self-reference mechanism) */
+static BOOL updateValueSelfRef(UINT message, WPARAM wParam, LPARAM lParam){
+	return updateValue((struct _eventargs*)getCurrentThis(), message, wParam, lParam);
+}
+
+
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _eventargs *newEventArgs(UINT message, WPARAM wParam, LPARAM lParam){
+	struct _eventargs *eventargs = (struct _eventargs*)malloc(sizeof(struct _eventargs));
+
+	if (!eventargs)
+		return NULL;
+
+	inheritFromObject(eventargs, newObject());
+
+	*eventargs->type = EVENTARGS;
+
+	safeInit(eventargs->message, UINT, message);
+	safeInit(eventargs->wParam, WPARAM, wParam);
+	safeInit(eventargs->lParam, LPARAM, lParam);
+
+	eventargs->updateValue = &updateValueSelfRef;
+	eventargs->updateValueT = &updateValue;
+
+	return eventargs;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteEventArgs(struct _eventargs *eventargs){
+	free(eventargs->message);
+	free(eventargs->wParam);
+	free(eventargs->lParam);
+
+	deleteObject((struct _object*)eventargs);
+}
+
+
+
+
+
+/* ======================================================Class MouseEventArgs====================================================================== */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Updates the value of a MouseEventArgs object */
+/* Overrides updateValueT in EventArgs */
+static BOOL _mouseeventargs_updateValue(struct _eventargs *eventargs, UINT message, WPARAM wParam, LPARAM lParam){
+	if (!eventargs)
+		return FALSE;
+
+	*eventargs->message = message;
+	*eventargs->wParam = wParam;
+	*eventargs->lParam = lParam;
+	*((struct _mouseeventargs*)eventargs)->cursorX = GET_X_LPARAM(lParam);
+	*((struct _mouseeventargs*)eventargs)->cursorY = GET_Y_LPARAM(lParam);
+
+	return TRUE;
+}
+
+/* Updates the value of a MouseEventArgs object specified in the thread's context (the self-reference mechanism) */
+/* Overrides updateValue in EventArgs */
+static BOOL _mouseeventargs_updateValueSelfRef(UINT message, WPARAM wParam, LPARAM lParam){
+	return _mouseeventargs_updateValue((struct _eventargs*)getCurrentThis(), message, wParam, lParam);
+}
+
+
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _mouseeventargs *newMouseEventArgs(UINT message, WPARAM wParam, LPARAM lParam){
+	struct _mouseeventargs *mouseeventargs = (struct _mouseeventargs*)malloc(sizeof(struct _mouseeventargs));
+	if (!mouseeventargs)
+		return NULL;
+
+	inheritFromEventArgs(mouseeventargs, newEventArgs(message, wParam, lParam));
+
+	safeInit(mouseeventargs->cursorX, int, GET_X_LPARAM(lParam));
+	safeInit(mouseeventargs->cursorY, int, GET_Y_LPARAM(lParam));
+
+	*mouseeventargs->type = MOUSEEVENTARGS;
+
+	/* Override virtual methods */
+	mouseeventargs->updateValue = &_mouseeventargs_updateValueSelfRef;
+	mouseeventargs->updateValueT = &_mouseeventargs_updateValue;
+	mouseeventargs->base.updateValue = &_mouseeventargs_updateValueSelfRef;
+	mouseeventargs->base.updateValueT = &_mouseeventargs_updateValue;
+
+	return mouseeventargs;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteMouseEventArgs(struct _mouseeventargs *mouseeventargs){
+	free(mouseeventargs->cursorX);
+	free(mouseeventargs->cursorY);
+	deleteEventArgs((struct _eventargs*)mouseeventargs);
+}
+
+
+
+
+
+/* ======================================================Class Pen================================================================================= */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Updates the value of a Pen object */
+static BOOL _pen_updateValue(struct _pen *pen, int penStyle, int width, COLORREF color){
+	if (!pen)
+		return FALSE;
+	*pen->penStyle = penStyle;
+	*pen->width = width;
+	*pen->color = color;
+	if (!DeleteObject(*pen->handle))
+		return FALSE;
+	*pen->handle = CreatePen(penStyle, width, color);
+	if (!*pen->handle)
+		return FALSE;
+	return TRUE;
+}
+
+/* Updates the value of a Pen object specified in the thread's context (the self-reference mechanism) */
+static BOOL _pen_updateValueSelfRef(int penStyle, int width, COLORREF color){
+	return _pen_updateValue((struct _pen*)getCurrentThis(), penStyle, width, color);
+}
+
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _pen *newPen(int penStyle, int width, COLORREF color){
+	struct _pen *pen = (struct _pen*)malloc(sizeof(struct _pen));
+
+	if (!pen)
+		return NULL;
+
+	inheritFromObject(pen, newObject());
+
+	*pen->type = PEN;
+
+	safeInit(pen->penStyle, int, penStyle);
+	safeInit(pen->width, int, width);
+	safeInit(pen->color, COLORREF, color);
+	safeInit(pen->handle, HPEN, CreatePen(penStyle, width, color));
+
+	pen->updateValue = &_pen_updateValueSelfRef; pen->updateValueT = &_pen_updateValue;
+
+	return pen;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deletePen(struct _pen *pen){
+	free(pen->penStyle); free(pen->width); free(pen->color); DeleteObject(*pen->handle); free(pen->handle);
+	deleteObject((struct _object*)pen);
+}
+
+
+
+
+
+/* ======================================================Class Brush=============================================================================== */
+/* -------------------------------------------------The Methods----------------------------------------------------------------------------------*/
+/* Updates the value of a Brush object */
+static BOOL _brush_updateValue(struct _brush *brush, UINT brushStyle, COLORREF color, ULONG_PTR hatch){
+	LOGBRUSH brushInfo;
+	if (!brush)
+		return FALSE;
+
+	*brush->brushStyle = brushStyle; brushInfo.lbStyle = brushStyle;
+	*brush->color = color; brushInfo.lbColor = color;
+	*brush->hatch = hatch; brushInfo.lbHatch = hatch;
+	if (!DeleteObject(*brush->handle))
+		return FALSE;
+	*brush->handle = CreateBrushIndirect(&brushInfo);
+	if (!*brush->handle)
+		return FALSE;
+	return TRUE;
+}
+
+/* Updates the value of a Brush object specified in the thread's context (the self-reference mechanism) */
+static BOOL _brush_updateValueSelfRef(UINT brushStyle, COLORREF color, ULONG_PTR hatch){
+	return _brush_updateValue((struct _brush*)getCurrentThis(), brushStyle, color, hatch);
+}
+
+/* -------------------------------------------------The Constructor------------------------------------------------------------------------------*/
+struct _brush *newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch){
+	struct _brush *brush = (struct _brush*)malloc(sizeof(struct _brush));
+	LOGBRUSH brushInfo;
+
+	if (!brush)
+		return NULL;
+
+	inheritFromObject(brush, newObject());
+
+	*brush->type = BRUSH;
+
+	safeInit(brush->brushStyle, UINT, brushStyle); brushInfo.lbStyle = brushStyle;
+	safeInit(brush->color, COLORREF, color); brushInfo.lbColor = color;
+	safeInit(brush->hatch, ULONG_PTR, hatch); brushInfo.lbHatch = hatch;
+	safeInit(brush->handle, HBRUSH, CreateBrushIndirect(&brushInfo));
+
+	brush->updateValue = &_brush_updateValueSelfRef; brush->updateValueT = &_brush_updateValue;
+
+	return brush;
+}
+
+/* -------------------------------------------------The Destructor--------------------------------------------------------------------------------*/
+void deleteBrush(struct _brush *brush){
+	free(brush->brushStyle); free(brush->color); DeleteObject(*brush->handle); free(brush->handle);
+	deleteObject((struct _object*)brush);
+}
+
+
+
+
+
+/* =============================================WINAPI CALL FUNCTIONS=============================================================================== */
 
 /*---------------------------------------------EVENT HANDLING------------------------------------------------------------*/
 /* The common asynchronous event callback function */
 static DWORD WINAPI asyncEventProc(LPVOID event){
 	struct _event *eventPointer = (struct _event*)event;
-	eventPointer->eventFunction(eventPointer->sender, eventPointer->context, NULL); //TODO: add event arg sending!
+	eventPointer->eventFunction(eventPointer->sender, eventPointer->context, eventPointer->args);
 	return TRUE;
 }
 
-/* Find and fire off an event for an object */
-static void handleEvents(struct _guiobject *currObject, UINT messageID){
+/* Find and fire off an event for a GUIObject */
+static int handleEvents(struct _guiobject *currObject, UINT messageID, WPARAM wParam, LPARAM lParam){
 	unsigned int i;
+	BOOL condition = TRUE;
 
 	for (i = 0; i < *currObject->numEvents; i++){
 		if  ((*currObject->events)[i].message == messageID && (*currObject->events)[i].eventFunction != NULL){
-			if ((*currObject->events)[i].mode != ASYNC)
-				((*currObject->events)[i].eventFunction)((*currObject->events)[i].sender,
-														(*currObject->events)[i].context, NULL); //TODO: add event arg sending!
-			else
-				CreateThread(NULL, 0, asyncEventProc, (LPVOID)&(*currObject->events)[i], 0, NULL);
+			if ((*currObject->events)[i].condition)
+				condition = *((*currObject->events)[i].condition);
+
+			if ((*currObject->events)[i].enabled && condition && (*currObject->events)[i].eventFunction){
+				EnterCriticalSection((*currObject->events)[i].args->criticalSection);
+				(*currObject->events)[i].args->updateValueT((*currObject->events)[i].args, messageID, wParam, lParam); /* Update the event args */
+				LeaveCriticalSection((*currObject->events)[i].args->criticalSection);
+
+				if ((*currObject->events)[i].mode == SYNC){
+					((*currObject->events)[i].eventFunction)((*currObject->events)[i].sender,
+															(*currObject->events)[i].context, (*currObject->events)[i].args);
+				} else
+					CreateThread(NULL, 0, asyncEventProc, (LPVOID)&(*currObject->events)[i], 0, NULL);
+			}
+
+			return (int)i;
 		}
 	}
+
+	return -1;
 }
 
 /* The event handling routine for WM_COMMAND type events for window controls */
-static void commandEventHandler(HWND hwnd, WPARAM wParam, LPARAM lParam){
+static int commandEventHandler(HWND hwnd, WPARAM wParam, LPARAM lParam){
 	UINT itemID = LOWORD(wParam), messageID = HIWORD(wParam);
 	struct _guiobject *currObject = (struct _guiobject*)GetWindowLongPtrA((HWND)lParam, GWLP_USERDATA);
 	char *controlText = NULL;
@@ -975,15 +1333,75 @@ static void commandEventHandler(HWND hwnd, WPARAM wParam, LPARAM lParam){
 			}
 		}
 
-		handleEvents(currObject, messageID);
-	}
+		return handleEvents(currObject, messageID, wParam, lParam);
+	} else
+		return -1;
 }
 
 /*---------------------------------------------FIELD VALUES CONSISTENCY SUPPORT ON REFRESH--------------------------------*/
+/* Resizes and/or moves the children of a window or a control according to their anchor settings */
+BOOL alignChildren(struct _guiobject *object, int widthChange, int heightChange){
+	unsigned int i;
+	struct _control *currChild;
+	int controlWidthChange = 0, controlHeightChange = 0;
+
+	if (!object)
+		return FALSE;
+
+	for (i = 0; i < *object->numChildren; i++){
+		if ((*object->children)[i] != NULL){
+			currChild = (struct _control*)(*object->children)[i];
+
+			if (((*currChild->anchor & 0xF000) && (*currChild->anchor & 0x000F)) ||
+					((*currChild->anchor & 0x0F00) && (*currChild->anchor & 0x00F0))){ /* Anchored top and bottom and/or left and right */
+				if ((*currChild->anchor & 0xF000) && (*currChild->anchor & 0x000F)) /* Anchored left and right */
+					controlWidthChange = widthChange;
+
+				if ((*currChild->anchor & 0x0F00) && (*currChild->anchor & 0x00F0)) /* Anchored top and bottom */
+					controlHeightChange = heightChange;
+
+				EnterCriticalSection(currChild->criticalSection);
+				setSize((*object->children)[i], *currChild->realWidth + controlWidthChange, *currChild->realHeight + controlHeightChange);
+				LeaveCriticalSection(currChild->criticalSection);
+
+				if (*currChild->numChildren != 0)
+					if (!alignChildren((*object->children)[i], controlWidthChange, controlHeightChange))
+						return FALSE;
+			} 
+			
+			if ((!(*currChild->anchor & 0xF000) && (*currChild->anchor & 0x000F)) || 
+						(!(*currChild->anchor & 0x0F00) && (*currChild->anchor & 0x00F0))){ /* Anchored right but not left and/or bottom but not top */
+				EnterCriticalSection(currChild->criticalSection);
+				_control_setPos((*object->children)[i], *currChild->realX + widthChange, *currChild->realY + heightChange);
+				LeaveCriticalSection(currChild->criticalSection); 
+			}
+
+			/* Not anchored left or right */
+			if (!(*currChild->anchor & 0xF000) && !(*currChild->anchor & 0x000F)){
+				EnterCriticalSection(currChild->criticalSection); EnterCriticalSection((*currChild->parent)->criticalSection);
+				setPos((*object->children)[i], *currChild->realX + *(*currChild->parent)->width / 2 - (*(*currChild->parent)->width - widthChange) / 2, 
+							*currChild->realY);
+				LeaveCriticalSection(currChild->criticalSection); LeaveCriticalSection((*currChild->parent)->criticalSection);
+			}
+
+			/* Not anchored top or bottom */
+			if  (!(*currChild->anchor & 0x0F00) && !(*currChild->anchor & 0x00F0)) {
+				EnterCriticalSection(currChild->criticalSection); EnterCriticalSection((*currChild->parent)->criticalSection);
+				setPos((*object->children)[i], *currChild->realX, 
+							*currChild->realY + *(*currChild->parent)->height / 2 - (*(*currChild->parent)->height - heightChange) / 2);
+				LeaveCriticalSection(currChild->criticalSection); LeaveCriticalSection((*currChild->parent)->criticalSection);
+			}
+		}
+	}
+
+	return TRUE;
+}
+
 /* Sets the current window's width, height and clientWidth and clientHeight on user resize. Thread-safe */
 static void refreshWindowSize(struct _window *window, LPARAM lParam){
 	RECT clientSize;
 	WINDOWPOS *windowPos;
+	int widthChange = 0, heightChange = 0;
 
 	EnterCriticalSection(window->criticalSection);
 
@@ -994,46 +1412,108 @@ static void refreshWindowSize(struct _window *window, LPARAM lParam){
 	*window->y = windowPos->y;
 
 	if (GetClientRect(*window->handle, &clientSize)){
+		widthChange = clientSize.right - clientSize.left - *window->clientWidth;
+		heightChange = clientSize.bottom - clientSize.top - *window->clientHeight;
+
 		*window->clientWidth = clientSize.right - clientSize.left;
 		*window->clientHeight = clientSize.bottom - clientSize.top;
 	}
 
 	LeaveCriticalSection(window->criticalSection);
+
+	alignChildren((struct _guiobject*)window, widthChange, heightChange);
+}
+
+/* The window proc prototype */
+static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+/* Display a control on a window */
+BOOL displayControl(struct _control *control){
+	HFONT hFont;
+	LOGFONT lf;
+
+	/* Add the control */
+	*control->handle = CreateWindowExA(*control->exStyles, *control->className, *control->text, *control->styles, *control->x, *control->y,
+		*control->width, *control->height, (*control->parent) ? *(*control->parent)->handle : NULL, *control->ID, *control->moduleInstance, NULL);
+
+	if (!*control->handle)
+		return FALSE;
+
+	/* Change its font */
+	GetObject(GetStockObject(DEFAULT_GUI_FONT), sizeof(LOGFONT), &lf); 
+	hFont = CreateFont(0, 0, 0, 0, 400, 0, 0, lf.lfStrikeOut, lf.lfCharSet, lf.lfOutPrecision, 
+							lf.lfClipPrecision, lf.lfQuality, lf.lfPitchAndFamily, lf.lfFaceName);
+	//TODO: make the font a property of the Object type!
+	SendMessageA(*control->handle, WM_SETFONT, (WPARAM)hFont, TRUE);
+		
+	/* Set the control handle's additional data to a pointer to its object */
+	SetWindowLongPtrA(*control->handle, GWLP_USERDATA, (LONG)control);
+
+	/* Subclass the control to make it send its messages through the main window proc */
+	*control->origProcPtr = SetWindowLongPtrA(*control->handle, GWLP_WNDPROC, (LONG_PTR)windowProc);
+	if (!*control->origProcPtr)
+		return FALSE;
+	
+	EnableWindow(*control->handle, *control->enabled);
+
+	return TRUE;
+}
+
+/* Go through a GUIObject's list of children and add all of them to the window, then call itself on each of the children */
+static void displayChildren(struct _guiobject *object){
+	unsigned int i;
+
+	if (object)
+		for (i = 0; i < *object->numChildren; i++)
+			if ((*object->children)[i] != NULL)
+				displayControl((struct _control*)(*object->children)[i]);
 }
 
 
 /* The Window Procedure callback function */
 static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam){
 	struct _guiobject *currObject = NULL;
-	struct _window *window = NULL;
+	int eventID = -1;
+	BOOL interrupt = FALSE;
 
-	if (hwnd != NULL){
+	if (hwnd != NULL)
 		currObject = (struct _guiobject*)GetWindowLongPtrA(hwnd, GWLP_USERDATA); /* Get the object that this handle belongs to */
-		if (currObject && *currObject->type == WINDOW) /* If the window has been created */
-			window = (struct _window*)(currObject->derived);
-	}
 
-	if (currObject)
-		handleEvents(currObject, msg);
-
+	/* Default event handling */
 	switch(msg){
 		case WM_CREATE:
-			//Move start call to child window adding to here?
+			if (currObject)
+				displayChildren(currObject);
+			break;
+
+		case WM_PAINT:
+			if (currObject) /* Begin or end painting the object */
+				if (!*currObject->paintContext)
+					*currObject->paintContext = BeginPaint(*currObject->handle, currObject->paintData);
 			break;
 
 		case WM_COMMAND:
-			commandEventHandler(hwnd, wParam, lParam);
+			eventID = commandEventHandler(hwnd, wParam, lParam);
 			break;
 
 		case WM_NOTIFY:
 			//TODO: add "notify" event handling!
 			break;
 
-		case WM_WINDOWPOSCHANGING:
-		case WM_WINDOWPOSCHANGED:
-			//TODO: add children resizing!
-			if (window)
-				refreshWindowSize(window, lParam);
+		case WM_GETMINMAXINFO: /* The window size or position limits are queried */
+			if (currObject){
+				((MINMAXINFO*)lParam)->ptMaxSize.x = *currObject->maxWidth;
+				((MINMAXINFO*)lParam)->ptMaxSize.y = *currObject->maxHeight;
+				((MINMAXINFO*)lParam)->ptMaxTrackSize.x = *currObject->maxWidth;
+				((MINMAXINFO*)lParam)->ptMaxTrackSize.y = *currObject->maxHeight;
+				((MINMAXINFO*)lParam)->ptMinTrackSize.x = *currObject->minWidth;
+				((MINMAXINFO*)lParam)->ptMinTrackSize.y = *currObject->minHeight;
+			}
+			break;
+
+		case WM_WINDOWPOSCHANGED: /* The window size or position have just been changed */
+			if (*currObject->type == WINDOW)
+				refreshWindowSize((struct _window*)currObject, lParam);
 			break;
 
         case WM_CLOSE:
@@ -1044,16 +1524,31 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             PostQuitMessage(0);
 			break;
     }
+
+	if (currObject){
+		eventID = handleEvents(currObject, msg, wParam, lParam);
+		
+		if (msg == WM_PAINT && *currObject->handle) {
+			EndPaint(*currObject->handle, currObject->paintData);
+			*currObject->paintContext = NULL;
+		}
+	}
 	
 	/* Call the window's events */
 	if (currObject){
-		if (window)
-			return DefWindowProcA(hwnd, msg, wParam, lParam);
-		else /* Resend the messages to the subclassed object's default window proc. Note: make option to intercept these on event handling! */
-			return CallWindowProcA((WNDPROC)(*currObject->origProcPtr), hwnd, msg, wParam, lParam);
-	}
+		if (eventID >= 0 && (UINT)eventID < *currObject->numEvents)
+			interrupt = (*currObject->events)[eventID].interrupt;
 
-	return DefWindowProcA(hwnd, msg, wParam, lParam);
+		if (!interrupt){
+			if (*currObject->type == WINDOW)
+				return DefWindowProcA(hwnd, msg, wParam, lParam);
+			else /* Resend the messages to the subclassed object's default window proc */
+				return CallWindowProcA((WNDPROC)(*currObject->origProcPtr), hwnd, msg, wParam, lParam);
+		}
+
+		return 0;
+	} else
+		return DefWindowProcA(hwnd, msg, wParam, lParam);
 }
 
 /* Register a window's WinAPI "class" */
@@ -1079,55 +1574,6 @@ static BOOL registerClass(HINSTANCE hInstance, char *className, WNDPROC procName
 	return result;
 }
 
-/* Display a control on a window */
-static HWND showControl(HWND hwnd, HINSTANCE hInstance, HMENU controlID, char *controlType, DWORD controlStyle, DWORD controlExStyle,
-						char *controlText, int controlX, int controlY, int controlWidth, int controlHeight){
-	HWND hControl;
-	HFONT hFont;
-	LOGFONT lf;
-
-	/* Add the control */
-	hControl = CreateWindowExA(controlExStyle, controlType, controlText, controlStyle, controlX, controlY, controlWidth,
-								controlHeight, hwnd, controlID, hInstance, NULL);
-
-	/* Change its font */
-	GetObject(GetStockObject(DEFAULT_GUI_FONT), sizeof(LOGFONT), &lf); 
-	hFont = CreateFont(0, 0, 0, 0, 400, 0, 0, lf.lfStrikeOut, lf.lfCharSet, lf.lfOutPrecision, 
-							lf.lfClipPrecision, lf.lfQuality, lf.lfPitchAndFamily, lf.lfFaceName);
-	//TODO: make the font a property of the Object type!
-
-	SendMessageA(hControl, WM_SETFONT, (WPARAM)hFont, TRUE);
-
-	return hControl;
-}
-
-/* Go through an object's list of children and add all of them to the window, then call itself on each of the children */
-static void addChildren(struct _guiobject *control){
-	unsigned int i;
-
-	for (i = 0; i < *control->numChildren; i++){
-		*((*control->children)[i])->handle = showControl(*control->handle, *control->moduleInstance, *((*control->children)[i])->ID,
-													   *((*control->children)[i])->className, *((*control->children)[i])->styles,
-													   *((*control->children)[i])->exStyles,
-													   *((*control->children)[i])->text, 
-													   *((*control->children)[i])->x, *((*control->children)[i])->y,
-													   *((*control->children)[i])->width,
-													   *((*control->children)[i])->height);
-		
-
-		/* Subclass the control to make it send its messages through the main window proc */
-		*((*control->children)[i])->origProcPtr = SetWindowLongA(*((*control->children)[i])->handle, GWLP_WNDPROC, (LONG_PTR)windowProc);
-		
-		/* Set the control handle's additional data to a pointer to its object */
-		SetWindowLongPtrA(*((*control->children)[i])->handle, GWLP_USERDATA, (LONG)((*control->children)[i]));
-		
-		EnableWindow(*((*control->children)[i])->handle, *((*control->children)[i])->enabled);
-
-		if (*((*control->children)[i])->numChildren != 0)
-			addChildren((*control->children)[i]);
-	}
-}
-
 /* Display a window with the application's command line settings */
 BOOL displayWindow(struct _window *mainWindow, int nCmdShow){
     MSG msg;
@@ -1148,16 +1594,16 @@ BOOL displayWindow(struct _window *mainWindow, int nCmdShow){
 
 	if (!*mainWindow->handle)
 		return FALSE;
-	
+
 	/* Set the window handle's additional data to a pointer to its object */
-	SetWindowLongPtrA(*mainWindow->handle, GWLP_USERDATA, (LONG)(mainWindow->base));
+	SetWindowLongPtrA(*mainWindow->handle, GWLP_USERDATA, (LONG)(mainWindow));
 
 	if (GetClientRect(*mainWindow->handle, &clientRect)){
 		*mainWindow->clientWidth = clientRect.right - clientRect.left;
 		*mainWindow->clientHeight = clientRect.bottom - clientRect.top;
 	}
 
-	addChildren(mainWindow->base);
+	displayChildren((struct _guiobject*)mainWindow);
 
 	ShowWindow(*mainWindow->handle, nCmdShow);
     UpdateWindow(*mainWindow->handle);

@@ -1,4 +1,6 @@
 #include <windows.h>
+#include <windowsx.h>
+#include <wincodec.h>
 #include <stdio.h>
 
 /* Set the visual styles for code compiling in Visual Studio */
@@ -13,6 +15,7 @@
 /* The object types */
 enum _objectType {
 	OBJECT,
+	GUIOBJECT,
 	/* Window types */
 	WINDOW,
 	DIALOG,
@@ -20,27 +23,19 @@ enum _objectType {
 	CONTROL,
 	BUTTON,
 	LABEL,
-	TEXTBOX
+	TEXTBOX,
+	/* Event arg types */
+	EVENTARGS,
+	MOUSEEVENTARGS,
+	/* GDI types */
+	PEN,
+	BRUSH
 };
 
 /* An event sync mode */
 enum _syncMode {
 	SYNC,
 	ASYNC
-};
-
-/* An event's arguments */
-struct _eventArgs{
-	BOOL PLACEHOLDER; //TODO!
-};
-
-/* An event */
-struct _event {
-	void (*eventFunction)(void*, void*, struct _eventArgs*);
-	enum _syncMode mode;
-	DWORD message;
-	void *sender;
-	void *context;
 };
 
 /* TextBox multiline/singleline */
@@ -50,488 +45,539 @@ enum _textboxtype {
 };
 
 
-/* =============================================OBJECT DEFINITIONS========================================================= */
 
-/* The main object "interface". All other types directly or indirectly "inherit" from it. */
-struct _guiobject {
-	void *derived; /* The derived type */
+/* ======================================================Class Object============================================================================= */
+/* Inheritance: base class */
+struct _object {
+#define _object_MEMBERS \
+	enum _objectType *type; /* The object type */ \
+	CRITICAL_SECTION *criticalSection /* The critical section for synchronising access to the object */
 
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
+	_object_MEMBERS;
+};
 
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
+/* To be used in constructors of any class directly derived from Object */
+#define inheritFromObject(object, basePointer) \
+		if (!basePointer) return NULL; \
+		object->base = *basePointer; \
+		object->type = object->base.type; \
+		object->criticalSection = object->base.criticalSection
 
-	enum _objectType *type; /* The window/control type */
-	
-	/* events */
-	struct _event **events;
-	unsigned int *numEvents;
+/* The class typedef */
+typedef struct _object *Object;
 
-	/* properties */
-	char **text; /* The window/control text */
+/* The constructor prototype */
+struct _object *newObject();
 
-	int *width;
-	int *height;
+/* The destructor prototype */
+void deleteObject(struct _object *object);
 
-	int *x;
-	int *y;
 
-	BOOL *enabled;
 
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
+/* ======================================================Class EventArgs=========================================================================== */
+/* Inheritance: base class, inherits from Object */
+struct _eventargs {
+	struct _object base;
 
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
+#define _eventargs_MEMBERS \
+	_object_MEMBERS; \
+	/* fields */ \
+	UINT *message; \
+	WPARAM *wParam; \
+	LPARAM *lParam; \
+	/* methods */ \
+	BOOL (*updateValue)(UINT, WPARAM, LPARAM); \
+	BOOL (*updateValueT)(struct _eventargs*, UINT, WPARAM, LPARAM)
 
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
+	_eventargs_MEMBERS;
+};
 
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
+/* To be used in constructors of any class directly derived from EventArgs */
+#define inheritFromEventArgs(object, basePointer) \
+		inheritFromObject(object, basePointer); \
+		object->message = object->base.message; \
+		object->wParam = object->base.wParam; \
+		object->lParam = object->base.lParam; \
+		object->updateValue = object->base.updateValue; \
+		object->updateValueT = object->base.updateValueT
 
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
+/* The class typedef */
+typedef struct _eventargs *EventArgs;
 
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
+/* The constructor prototype */
+struct _eventargs *newEventArgs(UINT message, WPARAM wParam, LPARAM lParam);
 
-	//TODO (events): setOnSizeChange, setOnPosChange, setOnRepaint, setOnRightclick
+/* The destructor prototype */
+void deleteEventArgs(struct _eventargs *eventargs);
+
+
+
+/* ======================================================Class MouseEventArgs====================================================================== */
+/* Inheritance: sealed class, inherits from EventArgs */
+struct _mouseeventargs {
+	struct _eventargs base;
+
+#define _mouseeventargs_MEMBERS
+	_eventargs_MEMBERS; \
+	int *cursorX; \
+	int *cursorY
+
+	_mouseeventargs_MEMBERS;
+};
+
+/* The class typedef */
+typedef struct _mouseeventargs *MouseEventArgs;
+
+/* The constructor prototype */
+struct _mouseeventargs *newMouseEventArgs(UINT message, WPARAM wParam, LPARAM lParam);
+
+/* The destructor prototype */
+void deleteMouseEventArgs(struct _mouseeventargs *eventargs);
+
+
+
+/* ====================================================Non - class types=========================================================================== */
+
+/* An event */
+struct _event {
+	void (*eventFunction)(struct _guiobject*, void*, struct _eventargs*); /* The callback */
+	enum _syncMode mode; /* The sync mode */
+	UINT message; /* The message ID */
+	struct _guiobject *sender; /* The sender object */
+	void *context; /* A pointer to data that gets sent on every event */
+	struct _eventargs *args; /* The event args */
+	BOOL *condition; /* A pointer to a variable that determines if the event should be handled */
+	BOOL interrupt; /* If this is set to TRUE, the default handling for the event doesn't occur */
+	BOOL enabled; /* The event's enabled status */
 };
 
 
-/* The Window type. Inherits from the GUIObject interface */
+/* ======================================================Class GUIObject=========================================================================== */
+/* Inheritance: base class, inherits from Object */
+struct _guiobject {
+	struct _object base;
+
+#define _guiobject_MEMBERS \
+	_object_MEMBERS; \
+	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */  \
+	 \
+	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */  \
+	HINSTANCE *moduleInstance; /* The current module instance */  \
+	PAINTSTRUCT *paintData; \
+	HDC *paintContext; \
+	 \
+	char **className; /* The name of the window/control's WinAPI "class" */  \
+	HMENU *ID; /* The child-window/control identifier */  \
+	DWORD *styles; /* The window/control styles */  \
+	DWORD *exStyles; /* The window/control extended styles */  \
+	 \
+	/* events */  \
+	struct _event **events; \
+	unsigned int *numEvents; \
+	 \
+	char **text; /* The window/control text */  \
+	 \
+	int *width; \
+	int *height; \
+	 \
+	int *minWidth; \
+	int *minHeight; \
+	 \
+	int *maxWidth; \
+	int *maxHeight; \
+	 \
+	int *realWidth; /* Used in anchor calculations. Not affected by min and max settings */ \
+	int *realHeight; \
+	 \
+	int *x; \
+	int *y; \
+	 \
+	int *realX; /* Used in anchor calculations. Not affected by min and max settings */ \
+	int *realY; \
+	 \
+	BOOL *enabled; \
+	 \
+	/* links */  \
+	struct _guiobject **parent; /* A pointer to the parent */  \
+	struct _guiobject ***children; /* A pointer to the array of children */  \
+	unsigned int *numChildren; /* The number of children */  \
+	 \
+	/* methods */  \
+	BOOL (*addChild)(struct _guiobject*); /* Add a child control to the object */ \
+	BOOL (*addChildT)(struct _guiobject*, struct _guiobject*); /* Version without self-reference mechanism */ \
+	 \
+	BOOL (*removeChild)(struct _guiobject*); /* Remove a child control from the object */ \
+	BOOL (*removeChildT)(struct _guiobject*, struct _guiobject*); /* Version without self-reference mechanism */ \
+	 \
+	int (*setEvent)(DWORD, void(*)(struct _guiobject*, void*, struct _eventargs*), void*, enum _syncMode); \
+	int (*setEventT)(struct _guiobject*, DWORD, void(*)(struct _guiobject*, void*, struct _eventargs*), void*, enum _syncMode); \
+	 \
+	BOOL (*setEventCondition)(int, BOOL*); \
+	BOOL (*setEventConditionT)(struct _guiobject*, int, BOOL*); \
+	 \
+	BOOL (*setEventInterrupt)(int, BOOL); \
+	BOOL (*setEventInterruptT)(struct _guiobject*, int, BOOL); \
+	 \
+	BOOL (*setEventEnabled)(int, BOOL); \
+	BOOL (*setEventEnabledT)(struct _guiobject*, int, BOOL); \
+	 \
+	int (*setOnClick)(void(*)(struct _guiobject*, void*, struct _eventargs*), void*, enum _syncMode); /* Set an OnClick event for the object */ \
+	int (*setOnClickT)(struct _guiobject*, void(*)(struct _guiobject*, void*, struct _eventargs*), void*, enum _syncMode); /* Version without self-reference mechanism */ \
+	 \
+	BOOL (*setPos)(int, int); \
+	BOOL (*setPosT)(struct _guiobject*, int, int); \
+	 \
+	BOOL (*setSize)(int, int); \
+	BOOL (*setSizeT)(struct _guiobject*, int, int); \
+	 \
+	BOOL (*setMinSize)(int, int); \
+	BOOL (*setMinSizeT)(struct _guiobject*, int, int); \
+	 \
+	BOOL (*setMaxSize)(int, int); \
+	BOOL (*setMaxSizeT)(struct _guiobject*, int, int); \
+	 \
+	BOOL (*setText)(char *text); \
+	BOOL (*setTextT)(struct _guiobject*, char *text); \
+	 \
+	BOOL (*setEnabled)(BOOL); \
+	BOOL (*setEnabledT)(struct _guiobject*, BOOL); \
+	 \
+	BOOL (*drawLine)(struct _pen*, int, int, int, int); \
+	BOOL (*drawLineT)(struct _guiobject*, struct _pen*, int, int, int, int); \
+	 \
+	BOOL (*drawArc)(struct _pen*, int, int, int, int, int, int, int, int); \
+	BOOL (*drawArcT)(struct _guiobject*, struct _pen*, int, int, int, int, int, int, int, int); \
+	 \
+	/*BOOL (*drawText)(struct _pen*, int, int, int, int);*/ \
+	/*BOOL (*drawTextT)(struct _guiobject*, struct _pen*, int, int, int, int);*/ \
+	 \
+	BOOL (*drawRect)(struct _pen*, struct _brush*, int, int, int, int); \
+	BOOL (*drawRectT)(struct _guiobject*, struct _pen*, struct _brush*, int, int, int, int); \
+	 \
+	BOOL (*drawRoundedRect)(struct _pen*, struct _brush*, int, int, int, int, int, int); \
+	BOOL (*drawRoundedRectT)(struct _guiobject*, struct _pen*, struct _brush*, int, int, int, int, int, int); \
+	 \
+	BOOL (*drawEllipse)(struct _pen*, struct _brush*, int, int, int, int); \
+	BOOL (*drawEllipseT)(struct _guiobject*, struct _pen*, struct _brush*, int, int, int, int); \
+	 \
+	BOOL (*drawPolygon)(struct _pen*, struct _brush*, int, LONG*); \
+	BOOL (*drawPolygonT)(struct _guiobject*, struct _pen*, struct _brush*, int, LONG*)
+
+	_guiobject_MEMBERS;
+	/* TODO (events): setOnSizeChange, setOnPosChange, setOnPaint, setOnRightclick */
+};
+
+/* To be used in constructors of any class directly derived from GUIObject */
+#define inheritFromGUIObject(object, basePointer) \
+	inheritFromObject(object, basePointer); \
+	object->origProcPtr = object->base.origProcPtr; \
+	object->handle = object->base.handle; object->moduleInstance = object->base.moduleInstance; \
+	object->paintData = object->base.paintData; object->paintContext = object->base.paintContext; \
+	object->className = object->base.className; \
+	object->ID = object->base.ID; object->styles = object->base.styles; object->exStyles = object->base.exStyles; \
+	/* event handling */ object->events = object->base.events; object->numEvents = object->base.numEvents; \
+	/* fields */ object->text = object->base.text; \
+	object->width = object->base.width; object->height = object->base.height; \
+	object->realWidth = object->base.realWidth; object->realHeight = object->base.realHeight; \
+	object->minWidth = object->base.minWidth; object->minHeight = object->base.minHeight; \
+	object->x = object->base.x; object->y = object->base.y; object->realX = object->base.realX; object->realY = object->base.realY; \
+	object->enabled = object->base.enabled; \
+	/* links */ object->parent = object->base.parent; object->children = object->base.children; \
+	object->numChildren = object->base.numChildren; \
+	/* methods */ \
+	object->addChild = object->base.addChild; object->addChildT = object->base.addChildT; \
+	object->removeChild = object->base.removeChild; object->removeChildT = object->base.removeChildT; \
+	object->setEvent = object->base.setEvent; object->setEventT = object->base.setEventT; \
+	object->setEventCondition = object->base.setEventCondition; object->setEventConditionT = object->base.setEventConditionT; \
+	object->setEventInterrupt = object->base.setEventInterrupt; object->setEventInterruptT = object->base.setEventInterruptT; \
+	object->setEventEnabled = object->base.setEventEnabled; object->setEventEnabledT = object->base.setEventEnabledT; \
+	object->setOnClick = object->base.setOnClick; object->setOnClickT = object->base.setOnClickT; \
+	object->setPos = object->base.setPos; object->setPosT = object->base.setPosT; \
+	object->setSize = object->base.setSize; object->setSizeT = object->base.setSizeT; \
+	object->setMinSize = object->base.setMinSize; object->setMinSizeT = object->base.setMinSizeT; \
+	object->setMaxSize = object->base.setMaxSize; object->setMaxSizeT = object->base.setMaxSizeT; \
+	object->setText = object->base.setText; object->setTextT = object->base.setTextT; \
+	object->setEnabled = object->base.setEnabled; object->setEnabledT = object->base.setEnabledT; \
+	object->drawLine = object->base.drawLine; object->drawLineT = object->base.drawLineT; \
+	object->drawArc = object->base.drawArc; object->drawArcT = object->base.drawArcT; \
+	/*object->drawText = object->base.drawText; object->drawTextT = object->base.drawTextT;*/ \
+	object->drawRect = object->base.drawRect; object->drawRectT = object->base.drawRectT; \
+	object->drawRoundedRect = object->base.drawRoundedRect; object->drawRoundedRectT = object->base.drawRoundedRectT; \
+	object->drawEllipse = object->base.drawEllipse; object->drawEllipseT = object->base.drawEllipseT; \
+	object->drawPolygon = object->base.drawPolygon; object->drawPolygonT = object->base.drawPolygonT
+
+/* The class typedef */
+typedef struct _guiobject *GUIObject;
+
+/* The constructor prototype */
+struct _guiobject *newGUIObject(HINSTANCE instance, char *caption, int width, int height);
+
+/* The destructor prototype */
+void deleteGUIObject(struct _guiobject *object);
+
+
+
+/* ======================================================Class Window============================================================================= */
+/* Inheritance: sealed class, inherits from GUIObject */
 struct _window {
-	struct _guiobject *base; /* the base type */
-	void *derived; /* The derived type */
+	struct _guiobject base;
 
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
+#define _window_MEMBERS
+	_guiobject_MEMBERS; \
+	/* fields */ \
+	int *clientWidth; \
+	int *clientHeight; \
+	 \
+	BOOL *resizable; \
+	BOOL *maximizeEnabled; \
+	 \
+	/* methods */ \
+	BOOL (*setResizable)(BOOL); \
+	BOOL (*setResizableT)(struct _window*, BOOL); \
+	 \
+	BOOL (*enableMaximize)(BOOL); \
+	BOOL (*enableMaximizeT)(struct _window*, BOOL)
 
-	/* ---------------------INHERITED------------------------------------------------------- */
-
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
-
-	enum _objectType *type; /* The window/control type */
-	
-	/* events */
-	struct _event **events;
-	unsigned int *numEvents;
-
-	/* properties */
-	char **text; /* The window/control text */
-
-	int *width;
-	int *height;
-
-	int *x;
-	int *y;
-
-	BOOL *enabled;
-
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
-
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
-
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
-
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
-
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
-
-	/* -----------------NOT INHERITED------------------------------------------------------- */
-
-	/* properties */
-	int *clientWidth;
-	int *clientHeight;
-
-	BOOL *resizable;
-	BOOL *maximizeEnabled;
-
-	/* methods */
-	BOOL (*addChild)(struct _control*); /* Add a child control to the window */
-	BOOL (*addChildT)(struct _window*, struct _control*); /* Version without self-reference mechanism */
-	
-	BOOL (*setOnClick)(void(*)(struct _window*, void*, struct _eventArgs*), void*, enum _syncMode); /* Set an OnClick event for the window */
-	BOOL (*setOnClickT)(struct _window*, void(*)(struct _window*, void*, struct _eventArgs*), void*, enum _syncMode); /* Version without self-reference mechanism */
-	
-	BOOL (*setResizable)(BOOL);
-	BOOL (*setResizableT)(struct _window*, BOOL);
-
-	BOOL (*enableMaximize)(BOOL);
-	BOOL (*enableMaximizeT)(struct _window*, BOOL);
+	_window_MEMBERS;
 
 	//TODO (events): setOnExit, setOnKeypress
 	//TODO (other methods): setFullscreen, makeTopmost
 };
 
-
-/* The Control type. Inherits from the GUIObject interface */
-struct _control {
-	struct _guiobject *base; /* The base type */
-	void *derived; /* The derived type */
-
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
-
-	/* ---------------------INHERITED------------------------------------------------------- */
-
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
-
-	enum _objectType *type; /* The window/control type */
-
-	/* event handlers */
-	struct _event **events;
-	unsigned int *numEvents;
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
-	
-	/* properties */
-	char **text; /* The window/control text */
-
-	int *width;
-	int *height;
-
-	int *x;
-	int *y;
-
-	BOOL *enabled;
-
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
-
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
-
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
-
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
-
-	/* -----------------NOT INHERITED------------------------------------------------------- */
-
-	/* methods */
-	BOOL (*addChild)(struct _control*); /* Add a child control to the control */
-	BOOL (*addChildT)(struct _control*, struct _control*); /* Version without self-reference mechanism */
-
-	BOOL (*addButton)(struct _button*); /* Add a button control to the control (for convenience) */
-	BOOL (*addButtonT)(struct _control*, struct _button*); /* Version without self-reference mechanism */
-};
-
-
-/* The Button type. Inherits from the Control type */
-struct _button {
-	struct _control *base; /* the base type */
-
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
-
-	/* ---------------------INHERITED------------------------------------------------------- */
-
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
-
-	enum _objectType *type; /* The window/control type */
-
-	/* event handlers */
-	struct _event **events;
-	unsigned int *numEvents;
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
-	
-	/* properties */
-	char **text; /* The window/control text */
-
-	int *width;
-	int *height;
-
-	int *x;
-	int *y;
-
-	BOOL *enabled;
-
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
-
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
-
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
-
-	BOOL (*addChild)(struct _control*); /* Add a child control to the control */
-	BOOL (*addChildT)(struct _control*, struct _control*); /* Version without self-reference mechanism */
-
-	BOOL (*addButton)(struct _button*); /* Add a button control to the control (for convenience) */
-	BOOL (*addButtonT)(struct _control*, struct _button*); /* Version without self-reference mechanism */
-
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
-
-	/* -----------------NOT INHERITED------------------------------------------------------- */
-	BOOL (*setOnClick)(void(*)(struct _button*, void*, struct _eventArgs*), void*, enum _syncMode); /* Set an OnClick event for the control */
-	BOOL (*setOnClickT)(struct _button*, void(*)(struct _button*, void*, struct _eventArgs*), void*, enum _syncMode); /* Version without self-reference mechanism */
-};
-
-
-/* The TextBox type. Inherits from the Control type */
-struct _textbox {
-	struct _control *base; /* the base type */
-
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
-
-	/* ---------------------INHERITED------------------------------------------------------- */
-
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
-
-	enum _objectType *type; /* The window/control type */
-
-	/* event handlers */
-	struct _event **events;
-	unsigned int *numEvents;
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
-	
-	/* properties */
-	char **text; /* The window/control text */
-
-	int *width;
-	int *height;
-
-	int *x;
-	int *y;
-
-	BOOL *enabled;
-
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
-
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
-
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
-
-	BOOL (*addChild)(struct _control*); /* Add a child control to the control */
-	BOOL (*addChildT)(struct _control*, struct _control*); /* Version without self-reference mechanism */
-
-	BOOL (*addButton)(struct _button*); /* Add a button control to the control (for convenience) */
-	BOOL (*addButtonT)(struct _control*, struct _button*); /* Version without self-reference mechanism */
-
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
-
-	/* -----------------NOT INHERITED------------------------------------------------------- */
-	/* properties */
-	BOOL *multiline;
-	BOOL *numOnly;
-
-	/* methods */
-	BOOL (*setOnClick)(void(*)(struct _textbox*, void*, struct _eventArgs*), void*, enum _syncMode); /* Set an OnClick event for the control */
-	BOOL (*setOnClickT)(struct _textbox*, void(*)(struct _textbox*, void*, struct _eventArgs*), void*, enum _syncMode); /* Version without self-reference mechanism */
-
-	BOOL (*setNumOnly)(BOOL);
-	BOOL (*setNumOnlyT)(struct _textbox*, BOOL);
-};
-
-
-/* The Label type. Inherits from the Control type */
-struct _label {
-	struct _control *base; /* the base type */
-
-	CRITICAL_SECTION *criticalSection; /* The critical section for synchronising access to the object */
-	LONG_PTR *origProcPtr; /* The pointer to the original window procedure */
-
-	/* ---------------------INHERITED------------------------------------------------------- */
-
-	HWND *handle; /* The handle to the window/control; initialized with a call to CreateWindowEx */
-	HINSTANCE *moduleInstance; /* The current module instance */
-	char **className; /* The name of the window/control's WinAPI "class" */
-	HMENU *ID; /* The child-window/control identifier */
-	DWORD *styles; /* The window/control styles bitfield */
-	DWORD *exStyles; /* The window/control extended styles bitfield */
-
-	enum _objectType *type; /* The window/control type */
-
-	/* event handlers */
-	struct _event **events;
-	unsigned int *numEvents;
-	BOOL (*setEvent)(DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-	BOOL (*setEventT)(struct _guiobject*, DWORD, void(*)(void*, void*, struct _eventArgs*), void*, enum _syncMode);
-
-	BOOL (*setText)(char *text);
-	BOOL (*setTextT)(struct _guiobject*, char *text);
-	
-	/* properties */
-	char **text; /* The window/control text */
-
-	int *width;
-	int *height;
-
-	int *x;
-	int *y;
-
-	BOOL *enabled;
-
-	/* links */
-	struct _guiobject **parent; /* A pointer to the parent */
-	struct _guiobject ***children; /* A pointer to the array of children */
-	unsigned int *numChildren; /* The number of children */
-
-	/* methods */
-	BOOL (*setPos)(int, int);
-	BOOL (*setPosT)(struct _guiobject*, int, int);
-
-	BOOL (*setSize)(int, int);
-	BOOL (*setSizeT)(struct _guiobject*, int, int);
-
-	BOOL (*addChild)(struct _control*); /* Add a child control to the control */
-	BOOL (*addChildT)(struct _control*, struct _control*); /* Version without self-reference mechanism */
-
-	BOOL (*addButton)(struct _button*); /* Add a button control to the control (for convenience) */
-	BOOL (*addButtonT)(struct _control*, struct _button*); /* Version without self-reference mechanism */
-
-	BOOL (*setEnabled)(BOOL);
-	BOOL (*setEnabledT)(struct _guiobject*, BOOL);
-
-	/* -----------------NOT INHERITED------------------------------------------------------- */
-	/* properties */
-	BOOL *multiline;
-	BOOL *numOnly;
-
-	/* methods */
-	BOOL (*setOnClick)(void(*)(struct _textbox*, void*, struct _eventArgs*), void*, enum _syncMode); /* Set an OnClick event for the control */
-	BOOL (*setOnClickT)(struct _textbox*, void(*)(struct _textbox*, void*, struct _eventArgs*), void*, enum _syncMode); /* Version without self-reference mechanism */
-};
-
-
-/* The current thread context */
-struct _threadContext {
-	struct _guiobject **threadObjects; /* A pointer to a list of all objects existing in the current thread */
-	unsigned int numObjects; /* The number of objects in the current thread */
-
-	void *currentThis; /* A pointer to the instance of the object currently being used in this thread */
-	DWORD threadID; /* The current thread's ID */
-};
-
-/* =============================================TYPEDEFS=================================================================== */
-
-typedef struct _guiobject *GUIObject;
+/* The class typedef */
 typedef struct _window *Window;
+
+/* The constructor prototype */
+struct _window *newWindow(HINSTANCE instance, char *caption, int width, int height);
+
+/* The destructor prototype */
+void deleteWindow(struct _window *window);
+
+
+
+/* ======================================================Class Control============================================================================= */
+/* Inheritance: base class, inherits from GUIObject */
+struct _control {
+	struct _guiobject base;
+
+#define _control_MEMBERS \
+	_guiobject_MEMBERS; \
+	 \
+	/* fields */ \
+	int *minX; \
+	int *minY; \
+	 \
+	int *maxX; \
+	int *maxY; \
+	 \
+	short *anchor; \
+	 \
+	/* methods */ \
+	BOOL (*setMinPos)(int, int); \
+	BOOL (*setMinPosT)(struct _control*, int, int); \
+	 \
+	BOOL (*setMaxPos)(int, int); \
+	BOOL (*setMaxPosT)(struct _control*, int, int)
+
+	//TODO: transparency!
+
+	_control_MEMBERS;
+};
+
+/* To be used in constructors of any class directly derived from Control */
+#define inheritFromControl(object, basePointer) \
+		inheritFromGUIObject(object, basePointer); \
+		object->minX = object->base.minX; object->minY = object->base.minY; \
+		object->maxX = object->base.maxX; object->maxY = object->base.maxY; \
+		object->anchor = object->base.anchor
+
+/* The class typedef */
 typedef struct _control *Control;
+
+/* The constructor prototype */
+struct _control *newControl(HINSTANCE instance, char *caption, int width, int height, int x, int y);
+
+/* The destructor prototype */
+void deleteControl(struct _control *control);
+
+
+
+/* ======================================================Class Button============================================================================= */
+/* Inheritance: sealed class, inherits from Control */
+struct _button {
+	struct _control base;
+
+#define _button_MEMBERS \
+	_control_MEMBERS \
+	//TODO?
+
+	_button_MEMBERS;
+};
+
+/* The class typedef */
 typedef struct _button *Button;
+
+/* The constructor prototype */
+struct _button *newButton(HINSTANCE instance, char *caption, int width, int height, int x, int y);
+
+/* The destructor prototype */
+void deleteButton(struct _button *button);
+
+
+
+/* ======================================================Class TextBox============================================================================= */
+/* Inheritance: sealed class, inherits from Control */
+struct _textbox {
+	struct _control base;
+
+#define _textbox_MEMBERS \
+	_control_MEMBERS; \
+	/* fields */ \
+	BOOL *multiline; \
+	BOOL *numOnly; \
+	 \
+	/* methods */ \
+	BOOL (*setNumOnly)(BOOL); \
+	BOOL (*setNumOnlyT)(struct _textbox*, BOOL)
+
+	_textbox_MEMBERS;
+};
+
+/* The class typedef */
 typedef struct _textbox *TextBox;
+
+/* The constructor prototype */
+struct _textbox *newTextBox(HINSTANCE instance, char *caption, int width, int height, int x, int y, enum _textboxtype multiline);
+
+/* The destructor prototype */
+void deleteTextBox(struct _textbox *textbox);
+
+
+
+/* ======================================================Class Label============================================================================= */
+/* Inheritance: sealed class, inherits from Control */
+struct _label {
+	struct _control base;
+
+#define _label_MEMBERS \
+	_control_MEMBERS \
+	//TODO?
+
+	_label_MEMBERS;
+};
+
+/* The class typedef */
 typedef struct _label *Label;
 
-typedef struct _eventArgs *EventArgs;
-typedef struct _eventArgs *MouseEventArgs; //TODO!
-
-typedef void(*Callback)(void*, void*, struct _eventArgs*);
-typedef void(*ButtonCallback)(struct _button*, void*, struct _eventArgs*);
-
-/* ==========================NON-ENCAPSULATED FUNCTION PROTOTYPES========================================================== */
-
-void setCurrentThis(void *self);
-
-/* Constructors */
-struct _guiobject *newObject(HINSTANCE instance, char *caption, int width, int height);
-struct _window *newWindow(HINSTANCE instance, char *caption, int width, int height);
-struct _control *newControl(HINSTANCE instance, char *caption, int width, int height, int x, int y);
-struct _button *newButton(HINSTANCE instance, char *caption, int width, int height, int x, int y);
-struct _textbox *newTextBox(HINSTANCE instance, char *caption, int width, int height, int x, int y, enum _textboxtype multiline);
+/* The constructor prototype */
 struct _label *newLabel(HINSTANCE instance, char *caption, int width, int height, int x, int y);
 
-/* Desctructors */
-BOOL deleteObject(struct _guiobject *object);
-BOOL deleteWindow(struct _window *window);
-BOOL deleteControl(struct _control *control);
-BOOL deleteButton(struct _button *button);
-BOOL deleteTextBox(struct _textbox *textbox);
-BOOL deleteLabel(struct _label *label);
+/* The destructor prototype */
+void deleteLabel(struct _label *label);
+
+
+
+/* ======================================================Class Pen================================================================================ */
+/* Inheritance: sealed class, inherits from Object */
+struct _pen {
+	struct _object base;
+
+#define _pen_MEMBERS \
+	_object_MEMBERS; \
+	/* fields */ \
+	HPEN *handle; \
+	int *penStyle; \
+	int *width; \
+	COLORREF *color; \
+	/* methods */ \
+	BOOL (*updateValue)(int, int, COLORREF); \
+	BOOL (*updateValueT)(struct _pen*, int, int, COLORREF)
+
+	_pen_MEMBERS;
+};
+
+/* The class typedef */
+typedef struct _pen *Pen;
+
+/* The constructor prototype */
+struct _pen *newPen(int penStyle, int width, COLORREF color);
+
+/* The destructor prototype */
+void deletePen(struct _pen *pen);
+
+
+
+/* ======================================================Class Brush============================================================================== */
+/* Inheritance: sealed class, inherits from Object */
+struct _brush {
+	struct _object base;
+
+#define _brush_MEMBERS \
+	_object_MEMBERS; \
+	/* fields */ \
+	HBRUSH *handle; \
+	UINT *brushStyle; \
+	COLORREF *color; \
+	ULONG_PTR *hatch; \
+	/* methods */ \
+	BOOL (*updateValue)(UINT, COLORREF, ULONG_PTR); \
+	BOOL (*updateValueT)(struct _brush*, UINT, COLORREF, ULONG_PTR)
+
+	_brush_MEMBERS;
+};
+
+/* The class typedef */
+typedef struct _brush *Brush;
+
+/* The constructor prototype */
+struct _brush *newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch);
+
+/* The destructor prototype */
+void deleteBrush(struct _brush *brush);
+
+
+
+
+
+
+
+/* =============================================Callback typedefs=================================================================== */
+
+typedef void(*Callback)(struct _guiobject*, void*, struct _eventargs*);
+typedef void(*ButtonCallback)(struct _guiobject*, void*, struct _eventargs*);
+
+
+
+/* =========================="STATIC" FUNCTION PROTOTYPES========================================================== */
+static void *getCurrentThis();
+void setCurrentThis(void *self);
 
 BOOL displayWindow(struct _window *mainWindow, int nCmdShow);
+HWND showControl(struct _control *control);
 
-/* =============================================MACROS===================================================================== */
+
+/* ======================================================Utility macros============================================================================= */
+/* Safe initialization: returns NULL if malloc fails */
+#define safeInit(field, type, value) if (!(field = (type*)malloc(sizeof(type)))) return NULL; *(field) = (type)value;
+
+/* Anchor macros */
+#define ANCHOR_LEFT 0xF000
+#define ANCHOR_RIGHT 0x000F
+#define ANCHOR_TOP 0x0F00
+#define ANCHOR_BOTTOM 0x00F0
+
+/* Color macros */
+#define COLOR_RED RGB(0xFF, 0, 0)
+#define COLOR_GREEN RGB(0, 0xFF, 0)
+#define COLOR_BLUE RGB(0, 0, 0xFF)
 
 /* "Method" call */
-#define $(object) setCurrentThis((void*)object), object
+#define $(object) (setCurrentThis((void*)object), object)
 
 /* Methods for adding children of types inherited from Control */
-#define addButton(button) addChild(button->base)
-#define addTextBox(textbox) addChild(textbox->base)
-#define addLabel(label) addChild(label->base)
-
-/* "Cast" object to base type */
-#define castToBase(object) object->base
-
-/* "Cast" the base type of an object back to derived type, or return NULL if this object is of the base type. Use with caution! */
-#define castGUIObjectToWindow(object) *((struct _guiobject*)object)->type == WINDOW ? \
-										(struct _window*)(((struct _guiobject*)object)->derived) : NULL;
-#define castGUIObjectToControl(object) *((struct _guiobject*)object)->type != WINDOW ? \
-										(struct _control*)(((struct _guiobject*)object)->derived) : NULL;
-#define castGUIObjectToButton(object) *((struct _guiobject*)object)->type == BUTTON ? \
-										((struct _control*)(((struct _guiobject*)object)->derived) ? \
-										(struct _button*)((struct _control*)(((struct _guiobject*)object)->derived)->derived) : NULL) : NULL;
-#define castControlToButton(object) *((struct _control*)object)->type == BUTTON ? \
-										(struct _button*)(((struct _control*)object)->derived) : NULL;
+#define addButton(button) addChild((struct _guiobject*)button)
+#define addTextBox(textbox) addChild((struct _guiobject*)textbox)
+#define addLabel(label) addChild((struct _guiobject*)label)
 
 /* Synchronize access to current object */
 #define startSync(object) EnterCriticalSection(object->criticalSection)
