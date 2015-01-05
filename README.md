@@ -10,7 +10,7 @@ tinyGUI sports a minimalist design, which contributes to its small size. However
 from this or other versions is mitigated by easy extendibility.
 
 To use tinyGUI, just add tinyGUI.h and tinyGUI.c to your project, 
-#include "tinyGUI/tinyGUI.h"
+`#include "tinyGUI/tinyGUI.h"`
 and start coding!
 
 tinyGUI is currently a work-in-progress, it is still missing many widgets and functionality that should make work easier.
@@ -18,7 +18,7 @@ A demonstration of some of its current capabilities can be found in demo.c. Stay
 
 P.S. This is the first project I've ever hosted at GitHub, sorry if I've messed up somehow!
 
-=======================================Object - oriented system===========================
+#Object - oriented system
 
 tinyGUI uses a custom object-oriented system called tinyObject, designed to create objects that are as easy to use 
 as to extend (though the former is the more important concern). This is achieved at the cost of slightly 
@@ -26,10 +26,12 @@ higher-intensive memory usage than that of different C object system implementat
 
 tinyObject uses the following syntaxis:
 
----------------------------------------Creating an object---------------------------------
+##Creating an object
 
+```
 Window window = newWindow(moduleInstance, "This is a test!", 440, 200); /* Create a window object of width 440 and height 200 */
 Button button = newButton(moduleInstance, "Button", 100, 25, 10, 10); /* Create a button object of width 100, height 25, x position 10 and y position 10 */
+```
 
 
  - Accessing an object’s field:
