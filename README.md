@@ -29,14 +29,20 @@ tinyObject uses the following syntaxis:
 ##Creating an object
 
 ```
-Window window = newWindow(moduleInstance, "This is a test!", 440, 200); /* Create a window object of width 440 and height 200 */
-Button button = newButton(moduleInstance, "Button", 100, 25, 10, 10); /* Create a button object of width 100, height 25, x position 10 and y position 10 */
+/* Create a window object of width 440 and height 200 */
+Window window = newWindow(moduleInstance, "This is a test!", 440, 200);
+
+/* Create a button object of width 100, height 25, x position 10 and y position 10 */
+Button button = newButton(moduleInstance, "Button", 100, 25, 10, 10); 
 ```
 
 
- - Accessing an object’s field:
+##Accessing an object’s field:
 
-MessageBoxA(NULL, *window->text, "The window’s text!", MB_OK); /* Access an object’s field */
+```
+/* Access an object’s field */
+MessageBoxA(NULL, *window->text, "The window’s text!", MB_OK);
+```
 
 	Note: In tinyGUI, to ease using inherited fields (i.e. avoid the object->base.base.base.field - style inherited field accessing traditionally 
 	associated with struct inheritance mechanisms in C), the fields are actually all pointers pointing to the real field values on the heap.
@@ -45,7 +51,7 @@ MessageBoxA(NULL, *window->text, "The window’s text!", MB_OK); /* Access an ob
 	parent instance. This slightly increases memory consumption, however, it makes using the objects easier.
 
 
------------------------------------Calling an object’s method (way #1, less code but incurs a slight overhead)--
+##Calling an object’s method (way #1, less code but incurs a slight overhead)--
 
 $(window)->setResizable(FALSE); /* Disable resizing a window */
 
@@ -54,7 +60,7 @@ $(window)->setResizable(FALSE); /* Disable resizing a window */
 	object->method(params);
 	Remember that this will work only until you call a method on another object instance.
 
--------------------Calling an object’s method (way #2 – “traditional”, more code but incurs no overhead)---------
+##Calling an object’s method (way #2 – “traditional”, more code but incurs no overhead)---------
 
 window->setResizableT(window, FALSE); /* Disable resizing a window – “traditional” */
 
@@ -64,12 +70,12 @@ window->setResizableT(window, FALSE); /* Disable resizing a window – “tradit
 	slightly verbose (see example in the constructor of MouseEventArgs in tinyGUI/tinyGUI.c).
 
 
----------------------------------------Destroying an object-----------------------------
+##Destroying an object-----------------------------
 
 deleteWindow(window); /* Call a window’s destructor */
 
 
----------------------------------------Additional information---------------------------
+##Additional information---------------------------
 
 tinyObject supports only public fields and virtual methods.
 tinyObject has sealed classes. These are classes that do not implement the standard macro mechanisms used by base
@@ -80,10 +86,10 @@ classes for inheritance.
 
 
 
-=======================================Library structure=======================================================
+#Library structure=======================================================
 
 tinyGUI has, so far, the following class inheritance hierarchy:
-
+`
  Object --> EventArgs --> MouseEventArgs
   | | |--> Pen
   | |--> Brush
@@ -97,7 +103,7 @@ tinyGUI has, so far, the following class inheritance hierarchy:
   | |--> TextBox
   V
  Label
-
+`
 A description of every class follows.
 
 
