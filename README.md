@@ -606,7 +606,8 @@ COLORREF *color; /* The pen's color in RGB (can be defined with the RGB(r, g, b)
 /* Updates the values of a Pen object's fields */
 BOOL updateValue(int penStyle, int width, COLORREF color);
 
-/* Note: this basically evaluates to a call to WinAPI function CreatePen with the same parameters. As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
+/* Note: this basically evaluates to a call to WinAPI function CreatePen with the same parameters. 
+As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
 ```
 
 ###Other: typedef, constructor and destructor
@@ -649,10 +650,11 @@ ULONG_PTR *hatch; /* Either a predefined macro value of a WinAPI hatch style, or
 /* Updates the value of a Brush object */
 BOOL updateValue(UINT brushStyle, COLORREF color, ULONG_PTR hatch)
 
-/* Note: this basically evaluates to a call to WinAPI function CreateBrushIndirect with the same parameters. As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
+/* Note: this basically evaluates to a call to WinAPI function CreateBrushIndirect with the same parameters. 
+As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
 ```
 
-###Other: typedef, constructor and destructor------------------------------
+###Other: typedef, constructor and destructor
 
 ```
 /* The class typedef */
