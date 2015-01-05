@@ -299,15 +299,15 @@ BOOL removeChild(GUIObject child);
    The mode parameter is the synchronization mode, it should be SYNC for synchronous events and ASYNC for asynchronous events. */
 int setEvent(DWORD message, void(*callback)(GUIObject, void*, EventArgs),
 					 void *context, enum _syncMode mode);
-/* Note: if the sender of an event is a type derived from GUIObject, or the event's arguments are of a type derived from EventArgs,
-it is preferred to cast them inside the function, along with the context parameter. However, you can also declare the callback with
-the actual expected types, like this, for example:
-void onClick(Button sender, Window mainWindow, MouseEventArgs e)
-and cast its pointer to the appropriate callback type (you can use the Callback typedef):
-$(button)->setOnClick((Callback)onClick, (void*)mainWindow, SYNC);
-Beware! This may be easier for you to use, but this technically causes undefined behaviour, according to the C standard, as this means
-that tinyGUI will call a function pointer typecasted from an incompatible function pointer type. However, in practice, in most modern 
-compilers on most modern systems, this is nearly always safe. */
+	/* Note: if the sender of an event is a type derived from GUIObject, or the event's arguments are of a type derived from EventArgs,
+	  it is preferred to cast them inside the function, along with the context parameter. However, you can also declare the callback with
+	  the actual expected types, like this, for example:
+	  void onClick(Button sender, Window mainWindow, MouseEventArgs e)
+	  and cast its pointer to the appropriate callback type (you can use the Callback typedef):
+	  $(button)->setOnClick((Callback)onClick, (void*)mainWindow, SYNC);
+	  Beware! This may be easier for you to use, but this technically causes undefined behaviour, according to the C standard, as this means
+	  that tinyGUI will call a function pointer typecasted from an incompatible function pointer type. However, in practice, in most modern 
+	  compilers on most modern systems, this is nearly always safe. */
 
 /* Sets a condition for an event of a GUIObject. The condition parameter is a pointer to a BOOL variable, the value of which should
    serve as a condition for the event handling referred to by eventID. I.e. if the value of this variable is TRUE, the event handling 
@@ -606,8 +606,8 @@ COLORREF *color; /* The pen's color in RGB (can be defined with the RGB(r, g, b)
 /* Updates the values of a Pen object's fields */
 BOOL updateValue(int penStyle, int width, COLORREF color);
 
-/* Note: this basically evaluates to a call to WinAPI function CreatePen with the same parameters. 
-As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
+	/* Note: this basically evaluates to a call to WinAPI function CreatePen with the same parameters. 
+	  As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
 ```
 
 ###Other: typedef, constructor and destructor
@@ -620,7 +620,7 @@ typedef struct _pen *Pen;
 ```
 /* The constructor prototype. Sets the field values to the values of the respective parameters */
 struct _pen *newPen(int penStyle, int width, COLORREF color);
-/* Note: this constructor is deprecated, see above. */
+	/* Note: this constructor is deprecated, see above. */
 ```
 
 ```
@@ -650,8 +650,8 @@ ULONG_PTR *hatch; /* Either a predefined macro value of a WinAPI hatch style, or
 /* Updates the value of a Brush object */
 BOOL updateValue(UINT brushStyle, COLORREF color, ULONG_PTR hatch)
 
-/* Note: this basically evaluates to a call to WinAPI function CreateBrushIndirect with the same parameters. 
-As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
+	/* Note: this basically evaluates to a call to WinAPI function CreateBrushIndirect with the same parameters. 
+  	   As such, it is (along with the constructor) deprecated and is to be replaced with more useful methods in the next versions. */
 ```
 
 ###Other: typedef, constructor and destructor
@@ -664,7 +664,7 @@ typedef struct _brush *Brush;
 ```
 /* The constructor prototype. Sets the field values to the values of the respective parameters */
 struct _brush *newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch);
-/* Note: this constructor is deprecated, see above. */
+	/* Note: this constructor is deprecated, see above. */
 ```
 
 ```
