@@ -24,6 +24,34 @@ static HANDLE getMutexOwnership(char *mutexName){
 }
 
 
+/* The window proc prototype */
+static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+
+/* Register a window's WinAPI "class" */
+static BOOL registerClass(HINSTANCE hInstance, char *className, WNDPROC procName){
+	WNDCLASSEXA wc;
+	BOOL result;
+
+	wc.cbSize = sizeof(WNDCLASSEXA);
+    wc.style = 0;
+	wc.lpfnWndProc = procName;
+	wc.cbClsExtra = 0;
+    wc.cbWndExtra = 0;
+    wc.hInstance = hInstance;
+    wc.hIcon = LoadIcon(GetModuleHandle(NULL), NULL);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
+    wc.lpszMenuName = NULL;
+    wc.lpszClassName = className;
+    wc.hIconSm = (HICON)LoadImage(GetModuleHandle(NULL), NULL, IMAGE_ICON, 16, 16, 0);
+
+	result = RegisterClassExA(&wc);
+
+	return result;
+}
+
+
 
 
 /* Make the constructors */
@@ -318,28 +346,79 @@ BOOL GUIObject_setEnabled(GUIObject object, BOOL enabled){
 		EnableWindow(object->handle, enabled);
 	return TRUE;
 }
+
+PRIVATE HBITMAP GUIObject_updateOffscreenPaintContext(GUIObject object, BOOL eraseBG, BOOL transparent){
+	HBITMAP prevBitmap;
+	RECT clientRect;
+	HBRUSH backgroundBrush;
+
+	GetClientRect(object->handle, &clientRect);
+
+	if (!object->offscreenBitmap){
+		if (object->offscreenPaintContext)
+			DeleteObject(object->offscreenPaintContext);
+
+		object->offscreenPaintContext = CreateCompatibleDC(object->paintContext);
+		object->offscreenBitmap = CreateCompatibleBitmap(object->paintContext, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top);
+	}
+
+	prevBitmap = SelectBitmap(object->offscreenPaintContext, object->offscreenBitmap);
+
+	if (eraseBG){
+		backgroundBrush = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
+		FillRect(object->offscreenPaintContext, &clientRect, backgroundBrush);
+		DeleteObject(backgroundBrush);
+	}
+
+	if (transparent)
+		SetBkMode(object->offscreenPaintContext, TRANSPARENT);
+
+	return prevBitmap;
+}
+
+PRIVATE void GUIObject_updatePaintContext(GUIObject object, HBITMAP prevBitmap){
+	RECT clientRect;
+	
+	GetClientRect(object->handle, &clientRect);
+
+	BitBlt(object->paintContext, clientRect.left, clientRect.top, clientRect.right - clientRect.left, clientRect.bottom - clientRect.top,
+		object->offscreenPaintContext, 0, 0, SRCCOPY);
+	SelectObject(object->offscreenPaintContext, prevBitmap);
+}
 	
 /* Draws a line in a GUIObject from the point specified by x1, y1 to the point specified by x2, y2 */
 BOOL GUIObject_drawLine(GUIObject object, Pen pen, int x1, int y1, int x2, int y2){
-	HPEN prevPen = NULL;
+	HPEN prevPen = NULL, activePen;
 	POINT prevPoint;
 	BOOL acquiredContext = FALSE;
-	if (!object || !pen)
+	HBITMAP prevBitmap;
+
+	if (!object)
 		return FALSE;
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	
 	if (!object->paintContext){
 		object->paintContext = GetDC(object->handle);
 		acquiredContext = TRUE;
 	}
 
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
-	if (!prevPen || !MoveToEx(object->paintContext, x1, y1, &prevPoint))
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
+
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
+	if (!prevPen || !MoveToEx(object->offscreenPaintContext, x1, y1, &prevPoint))
 		goto release_DC_on_error;
-	if (!LineTo(object->paintContext, x2, y2))
+	if (!LineTo(object->offscreenPaintContext, x2, y2))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!MoveToEx(object->paintContext, prevPoint.x, prevPoint.y, &prevPoint) || !SelectObject(object->paintContext, prevPen))
+	if (!MoveToEx(object->offscreenPaintContext, prevPoint.x, prevPoint.y, &prevPoint) || !SelectObject(object->offscreenPaintContext, prevPen))
 		goto release_DC_on_error;
+
+	GUIObject_updatePaintContext(object, prevBitmap);
 	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
@@ -358,24 +437,36 @@ BOOL GUIObject_drawLine(GUIObject object, Pen pen, int x1, int y1, int x2, int y
 	
 /* Draws an arc in a GUIObject */
 BOOL GUIObject_drawArc(GUIObject object, Pen pen, int boundX1, int boundY1, int boundX2, int boundY2, int x1, int y1, int x2, int y2){
-	HPEN prevPen = NULL;
+	HPEN prevPen = NULL, activePen;
 	BOOL acquiredContext = FALSE;
-	if (!object || !pen)
+	HBITMAP prevBitmap;
+
+	if (!object)
 		return FALSE;
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	
 	if (!object->paintContext){
 		object->paintContext = GetDC(object->handle);
 		acquiredContext = TRUE;
 	}
+
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
 	
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
 	if (!prevPen)
 		goto release_DC_on_error;
-	if (!Arc(object->paintContext, boundX1, boundY1, boundX2, boundY2, x1, y1, x2, y2))
+	if (!Arc(object->offscreenPaintContext, boundX1, boundY1, boundX2, boundY2, x1, y1, x2, y2))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!SelectObject(object->paintContext, prevPen))
+	if (!SelectObject(object->offscreenPaintContext, prevPen))
 		goto release_DC_on_error;
+	
+	GUIObject_updatePaintContext(object, prevBitmap);
 	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
@@ -394,12 +485,19 @@ BOOL GUIObject_drawArc(GUIObject object, Pen pen, int boundX1, int boundY1, int 
 	
 /* Draws a rectangle in a GUIObject */
 BOOL GUIObject_drawRect(GUIObject object, Pen pen, Brush brush, int boundX1, int boundY1, int boundX2, int boundY2){
-	HPEN prevPen = NULL;
-	HBRUSH prevBrush = NULL;
-	HBRUSH activeBrush;
+	HPEN prevPen = NULL, activePen;
+	HBRUSH prevBrush = NULL, activeBrush;
 	BOOL acquiredContext = FALSE;
-	if (!object || !pen)
+	HBITMAP prevBitmap;
+
+	if (!object)
 		return FALSE;
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	if (!brush)
 		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
 	else
@@ -409,17 +507,21 @@ BOOL GUIObject_drawRect(GUIObject object, Pen pen, Brush brush, int boundX1, int
 		object->paintContext = GetDC(object->handle);
 		acquiredContext = TRUE;
 	}
+
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
 	
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
-	prevBrush = (HBRUSH)SelectObject(object->paintContext, activeBrush);
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
+	prevBrush = (HBRUSH)SelectObject(object->offscreenPaintContext, activeBrush);
 	if (!prevPen || !prevBrush)
 		goto release_DC_on_error;
-	if (!Rectangle(object->paintContext, boundX1, boundY1, boundX2, boundY2))
+	if (!Rectangle(object->offscreenPaintContext, boundX1, boundY1, boundX2, boundY2))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!SelectObject(object->paintContext, prevPen) || !SelectObject(object->paintContext, prevBrush))
+	if (!SelectObject(object->offscreenPaintContext, prevPen) || !SelectObject(object->offscreenPaintContext, prevBrush))
 		goto release_DC_on_error;
 
+	GUIObject_updatePaintContext(object, prevBitmap);
+	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
 		object->paintContext = NULL;
@@ -438,12 +540,20 @@ BOOL GUIObject_drawRect(GUIObject object, Pen pen, Brush brush, int boundX1, int
 /* Draws a rounded rectangle in a GUIObject */
 BOOL GUIObject_drawRoundedRect(GUIObject object, Pen pen, Brush brush, int boundX1, int boundY1, 
 							int boundX2, int boundY2, int ellipseWidth, int ellipseHeight){
-	HPEN prevPen = NULL;
+	HPEN prevPen = NULL, activePen;
 	HBRUSH prevBrush = NULL;
 	HBRUSH activeBrush;
 	BOOL acquiredContext = FALSE;
-	if (!object || !pen)
+	HBITMAP prevBitmap;
+
+	if (!object)
 		return FALSE;
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	if (!brush)
 		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
 	else
@@ -453,17 +563,21 @@ BOOL GUIObject_drawRoundedRect(GUIObject object, Pen pen, Brush brush, int bound
 		object->paintContext = GetDC(object->handle);
 		acquiredContext = TRUE;
 	}
+
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
 	
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
-	prevBrush = (HBRUSH)SelectObject(object->paintContext, activeBrush);
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
+	prevBrush = (HBRUSH)SelectObject(object->offscreenPaintContext, activeBrush);
 	if (!prevPen || !prevBrush)
 		goto release_DC_on_error;
-	if (!RoundRect(object->paintContext, boundX1, boundY1, boundX2, boundY2, ellipseWidth, ellipseHeight))
+	if (!RoundRect(object->offscreenPaintContext, boundX1, boundY1, boundX2, boundY2, ellipseWidth, ellipseHeight))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!SelectObject(object->paintContext, prevPen) || !SelectObject(object->paintContext, prevBrush))
+	if (!SelectObject(object->offscreenPaintContext, prevPen) || !SelectObject(object->offscreenPaintContext, prevBrush))
 		goto release_DC_on_error;
 
+	GUIObject_updatePaintContext(object, prevBitmap);
+	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
 		object->paintContext = NULL;
@@ -481,12 +595,20 @@ BOOL GUIObject_drawRoundedRect(GUIObject object, Pen pen, Brush brush, int bound
 	
 /* Draws an ellipse in a GUIObject */
 BOOL GUIObject_drawEllipse(GUIObject object, Pen pen, Brush brush, int boundX1, int boundY1, int boundX2, int boundY2){
-	HPEN prevPen = NULL;
+	HPEN prevPen = NULL, activePen;
 	HBRUSH prevBrush = NULL;
 	HBRUSH activeBrush;
 	BOOL acquiredContext = FALSE;
-	if (!object || !pen)
+	HBITMAP prevBitmap;
+
+	if (!object)
 		return FALSE;
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	if (!brush)
 		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
 	else
@@ -496,17 +618,21 @@ BOOL GUIObject_drawEllipse(GUIObject object, Pen pen, Brush brush, int boundX1, 
 		object->paintContext = GetDC(object->handle);
 		acquiredContext = TRUE;
 	}
+
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
 	
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
-	prevBrush = (HBRUSH)SelectObject(object->paintContext, activeBrush);
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
+	prevBrush = (HBRUSH)SelectObject(object->offscreenPaintContext, activeBrush);
 	if (!prevPen || !prevBrush)
 		goto release_DC_on_error;
-	if (!Ellipse(object->paintContext, boundX1, boundY1, boundX2, boundY2))
+	if (!Ellipse(object->offscreenPaintContext, boundX1, boundY1, boundX2, boundY2))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!SelectObject(object->paintContext, prevPen) || !SelectObject(object->paintContext, prevBrush))
+	if (!SelectObject(object->offscreenPaintContext, prevPen) || !SelectObject(object->offscreenPaintContext, prevBrush))
 		goto release_DC_on_error;
 
+	GUIObject_updatePaintContext(object, prevBitmap);
+	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
 		object->paintContext = NULL;
@@ -524,15 +650,25 @@ BOOL GUIObject_drawEllipse(GUIObject object, Pen pen, Brush brush, int boundX1, 
 	
 /* Draws a polygon in a GUIObject */
 BOOL GUIObject_drawPolygon(GUIObject object, Pen pen, Brush brush, int numPoints, LONG *coords){
-	HPEN prevPen = NULL;
+	HPEN prevPen = NULL, activePen;
 	HBRUSH prevBrush = NULL;
 	HBRUSH activeBrush;
 	POINT *points = (POINT*)malloc(numPoints * sizeof(POINT));
 	BOOL acquiredContext = FALSE;
+	HBITMAP prevBitmap;
+
 	int i;
 	
-	if (!object || !pen || numPoints < 2)
+	if (!object || numPoints < 2){
+		free(points);
 		return FALSE;
+	}
+
+	if (!pen)
+		activePen = GetStockPen(NULL_PEN); /* If no pen was passed, use a null pen */
+	else
+		activePen = pen->handle;
+
 	if (!brush)
 		activeBrush = GetStockBrush(HOLLOW_BRUSH); /* If no brush was passed, use a hollow brush */
 	else
@@ -547,22 +683,27 @@ BOOL GUIObject_drawPolygon(GUIObject object, Pen pen, Brush brush, int numPoints
 		points[i / 2].x = coords[i];
 		points[i / 2].y = coords[i + 1];
 	}
+
+	prevBitmap = GUIObject_updateOffscreenPaintContext(object, TRUE, TRUE);
 	
-	prevPen = (HPEN)SelectObject(object->paintContext, pen->handle);
-	prevBrush = (HBRUSH)SelectObject(object->paintContext, activeBrush);
+	prevPen = (HPEN)SelectObject(object->offscreenPaintContext, activePen);
+	prevBrush = (HBRUSH)SelectObject(object->offscreenPaintContext, activeBrush);
 	if (!prevPen || !prevBrush)
 		goto release_DC_on_error;
-	if (!Polygon(object->paintContext, points, numPoints))
+	if (!Polygon(object->offscreenPaintContext, points, numPoints))
 		goto release_DC_on_error;
 	/* Restore previous values */
-	if (!SelectObject(object->paintContext, prevPen) || !SelectObject(object->paintContext, prevBrush))
+	if (!SelectObject(object->offscreenPaintContext, prevPen) || !SelectObject(object->offscreenPaintContext, prevBrush))
 		goto release_DC_on_error;
 
+	GUIObject_updatePaintContext(object, prevBitmap);
+	
 	if (acquiredContext){
 		ReleaseDC(object->handle, object->paintContext);
 		object->paintContext = NULL;
 	}
 
+	free(points);
 	return TRUE;
 
 	release_DC_on_error:
@@ -570,6 +711,8 @@ BOOL GUIObject_drawPolygon(GUIObject object, Pen pen, Brush brush, int numPoints
 		ReleaseDC(object->handle, object->paintContext);
 		object->paintContext = NULL;
 	}
+
+	free(points);
 	return FALSE;
 }
 
@@ -612,11 +755,14 @@ PRIVATE void setGUIObjectFields(GUIObject thisObject, HINSTANCE instance, char *
 	(thisObject->events)[0].args = newEventArgs(WM_LBUTTONUP, 0, 0); (thisObject->events)[0].condition = NULL;
 	(thisObject->events)[0].interrupt = FALSE; (thisObject->events)[0].enabled = FALSE;
 
-	textLength = strlen(text);
-	thisObject->text = (char*)malloc(textLength + 1);
-	if (!thisObject->text)
-		goto alloc_text_failed;
-	strcpy_s(thisObject->text, textLength + 1, text); /* Copy the object text to the heap */
+	if (text){
+		textLength = strlen(text);
+		thisObject->text = (char*)malloc(textLength + 1);
+		if (!thisObject->text)
+			goto alloc_text_failed;
+		strcpy_s(thisObject->text, textLength + 1, text); /* Copy the object text to the heap */
+	} else
+		thisObject->text = NULL;
 
 	thisObject->width = width; thisObject->height = height;
 	thisObject->realWidth = width; thisObject->realHeight = height;
@@ -654,11 +800,16 @@ GUIObject newGUIObject(HINSTANCE instance, char *text, int width, int height){
 	return thisObject;
 }
 
-/* The Destructor*/
-void deleteGUIObject(GUIObject object){
+void freeGUIObjectFields(GUIObject object){
 	unsigned int i;
 	EndPaint(object->handle, &(object->paintData));
-	DestroyWindow(object->handle);
+	if (!DestroyWindow(object->handle))
+		SendMessageA(object->handle, WM_CLOSE, (WPARAM)NULL, (WPARAM)NULL);
+	
+	DeleteCriticalSection(&(object->criticalSection));
+
+	if (object->parent)
+		GUIObject_removeChild(object->parent, object);
 
 	free(object->className);
 	if (object->events){
@@ -671,7 +822,11 @@ void deleteGUIObject(GUIObject object){
 		free(object->events);
 	}
 	free(object->text);
+}
 
+/* The Destructor*/
+void deleteGUIObject(GUIObject object){
+	freeGUIObjectFields(object);
 	free(object);
 }
 
@@ -717,6 +872,10 @@ void initWindow(Window thisObject, HINSTANCE instance, char *text, int width, in
 
 	setGUIObjectFields((GUIObject)thisObject, instance, text, width, height);
 
+	/* Register the window class */
+    if (!registerClass(thisObject->moduleInstance, thisObject->className, (WNDPROC)windowProc))
+    	return;
+
 	/* Set the fields */
 	thisObject->type = WINDOW;
 	thisObject->styles = WS_OVERLAPPEDWINDOW;
@@ -730,12 +889,14 @@ Window newWindow(HINSTANCE instance, char *text, int width, int height){
 		return NULL;
 
 	initWindow(thisObject, instance, text, width, height);
+
 	return thisObject;
 }
 
 /* The Destructor*/
 void deleteWindow(Window window){
-	deleteGUIObject((GUIObject)window);
+	freeGUIObjectFields((GUIObject)window);
+	free(window);
 }
 
 
@@ -869,7 +1030,8 @@ Control newControl(HINSTANCE instance, char *text, int x, int y, int width, int 
 
 /* The Destructor*/
 void deleteControl(Control control){
-	deleteGUIObject((GUIObject)control);
+	freeGUIObjectFields((GUIObject)control);
+	free(control);
 }
 
 
@@ -906,7 +1068,8 @@ Button newButton(HINSTANCE instance, char *text, int x, int y, int width, int he
 /* The Destructor*/
 void deleteButton(Button button){
 	button->className = NULL;
-	deleteGUIObject((GUIObject)button);
+	freeGUIObjectFields((GUIObject)button);
+	free(button);
 }
 
 
@@ -961,7 +1124,8 @@ TextBox newTextBox(HINSTANCE instance, char *text, int x, int y, int width, int 
 /* The Destructor*/
 void deleteTextBox(TextBox textbox){
 	textbox->className = NULL;
-	deleteGUIObject((GUIObject)textbox);
+	freeGUIObjectFields((GUIObject)textbox);
+	free(textbox);
 }
 
 
@@ -998,7 +1162,8 @@ Label newLabel(HINSTANCE instance, char *text, int x, int y, int width, int heig
 /* The Destructor*/
 void deleteLabel(Label label){
 	label->className = NULL;
-	deleteGUIObject((GUIObject)label);
+	freeGUIObjectFields((GUIObject)label);
+	free(label);
 }
 
 
@@ -1036,7 +1201,8 @@ EventArgs newEventArgs(UINT message, WPARAM wParam, LPARAM lParam){
 
 /* The Destructor*/
 void deleteEventArgs(EventArgs eventargs){
-	deleteObject((Object)eventargs);
+	DeleteCriticalSection(&(eventargs->criticalSection));
+	free(eventargs);
 }
 
 
@@ -1044,6 +1210,7 @@ void deleteEventArgs(EventArgs eventargs){
 
 
 /* Class MouseEventArgs */
+
 void MouseEventArgs_updateValue(EventArgs thisObject, UINT message, WPARAM wParam, LPARAM lParam){
 	initMouseEventArgs((MouseEventArgs)thisObject, message, wParam, lParam);
 }
@@ -1075,7 +1242,8 @@ MouseEventArgs newMouseEventArgs(UINT message, WPARAM wParam, LPARAM lParam){
 
 /* The Destructor*/
 void deleteMouseEventArgs(MouseEventArgs mouseeventargs){
-	deleteObject((Object)mouseeventargs);
+	DeleteCriticalSection(&(mouseeventargs->criticalSection));
+	free(mouseeventargs);
 }
 
 
@@ -1116,7 +1284,8 @@ Pen newPen(int penStyle, int width, COLORREF color){
 /* The Destructor*/
 void deletePen(Pen pen){
 	DeleteObject(pen->handle);
-	deleteObject((Object)pen);
+	DeleteCriticalSection(&(pen->criticalSection));
+	free(pen);
 }
 
 
@@ -1160,7 +1329,8 @@ Brush newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch){
 /* The Destructor*/
 void deleteBrush(Brush brush){
 	DeleteObject(brush->handle);
-	deleteObject((Object)brush);
+	DeleteCriticalSection(&(brush->criticalSection));
+	free(brush);
 }
 
 
@@ -1318,9 +1488,6 @@ static void refreshWindowSize(Window window, LPARAM lParam){
 	alignChildren((GUIObject)window, widthChange, heightChange);
 }
 
-/* The window proc prototype */
-static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 /* Display a control on a window */
 BOOL displayControl(Control control){
 	HFONT hFont;
@@ -1335,8 +1502,8 @@ BOOL displayControl(Control control){
 
 	/* Change its font */
 	GetObject(GetStockObject(DEFAULT_GUI_FONT), sizeof(LOGFONT), &lf); 
-	hFont = CreateFont(0, 0, 0, 0, 400, 0, 0, lf.lfStrikeOut, lf.lfCharSet, lf.lfOutPrecision, 
-							lf.lfClipPrecision, lf.lfQuality, lf.lfPitchAndFamily, lf.lfFaceName);
+	hFont = (HFONT)GetStockObject(DEFAULT_GUI_FONT);//CreateFontW(0, 0, 0, 0, 400, 0, 0, lf.lfStrikeOut, lf.lfCharSet, lf.lfOutPrecision, 
+							//lf.lfClipPrecision, lf.lfQuality, lf.lfPitchAndFamily, lf.lfFaceName);
 	//TODO: make the font a property of the Object type!
 	SendMessageA(control->handle, WM_SETFONT, (WPARAM)hFont, TRUE);
 		
@@ -1347,9 +1514,13 @@ BOOL displayControl(Control control){
 	control->origProcPtr = SetWindowLongPtrA(control->handle, GWLP_WNDPROC, (LONG_PTR)windowProc);
 	if (!control->origProcPtr)
 		return FALSE;
+
+	ShowWindow(control->handle, SW_SHOWDEFAULT);
 	
     UpdateWindow(control->handle);
 	EnableWindow(control->handle, control->enabled);
+	if (control->parent)
+		UpdateWindow(control->parent->handle);
 
 	return TRUE;
 }
@@ -1360,8 +1531,10 @@ static void displayChildren(GUIObject object){
 
 	if (object)
 		for (i = 0; i < object->numChildren; i++)
-			if ((object->children)[i] != NULL)
+			if ((object->children)[i] != NULL){
 				displayControl((Control)(object->children)[i]);
+				displayChildren((object->children)[i]);
+			}
 }
 
 
@@ -1397,6 +1570,13 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 			}
 			break;
 
+		case WM_ERASEBKGND:
+			if (currObject->customEraseBG)
+				return (LRESULT)TRUE;
+
+		/*case WM_CTLCOLORSTATIC:
+			return (LONG)GetStockObject(NULL_BRUSH);*/
+
 		case WM_COMMAND:
 			eventID = commandEventHandler(hwnd, wParam, lParam);
 			break;
@@ -1426,7 +1606,8 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 			break;
 
         case WM_DESTROY:
-            PostQuitMessage(0);
+			if (currObject && currObject->type == WINDOW)
+				PostQuitMessage(0);
 			break;
     }
 
@@ -1459,37 +1640,18 @@ static LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 		return DefWindowProcA(hwnd, msg, wParam, lParam);
 }
 
-/* Register a window's WinAPI "class" */
-static BOOL registerClass(HINSTANCE hInstance, char *className, WNDPROC procName){
-	WNDCLASSEXA wc;
-	BOOL result;
+/* Flushes the current thread's message queue */
+void flushMessageQueue(){
+	MSG msg;
 
-	wc.cbSize = sizeof(WNDCLASSEXA);
-    wc.style = 0;
-	wc.lpfnWndProc = procName;
-	wc.cbClsExtra = 0;
-    wc.cbWndExtra = 0;
-    wc.hInstance = hInstance;
-    wc.hIcon = LoadIcon(GetModuleHandle(NULL), NULL);
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)COLOR_WINDOW;
-    wc.lpszMenuName = NULL;
-    wc.lpszClassName = className;
-    wc.hIconSm = (HICON)LoadImage(GetModuleHandle(NULL), NULL, IMAGE_ICON, 16, 16, 0);
-
-	result = RegisterClassExA(&wc);
-
-	return result;
+	while (PeekMessageA(&msg,NULL,0,0,PM_REMOVE))
+		GetMessageA(&msg, NULL, 0, 0);
 }
 
 /* Display a window with the application's command line settings */
 BOOL displayWindow(Window mainWindow, int nCmdShow){
     MSG msg;
 	RECT clientRect;
-
-	/* Register the window class */
-    if (!registerClass(mainWindow->moduleInstance, mainWindow->className, (WNDPROC)windowProc))
-        return FALSE;
 
 	mainWindow->handle = CreateWindowExA(mainWindow->exStyles,  mainWindow->className,
 																mainWindow->text,

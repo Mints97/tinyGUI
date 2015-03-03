@@ -37,14 +37,20 @@ struct _ASSERTION_TEST_STRUCT2 { char a; int b; long c[100000]; long d[100000]; 
 STATIC_ASSERT(offsetof(struct _ASSERTION_TEST_STRUCT, b) == offsetof(struct _ASSERTION_TEST_STRUCT2, b),
 				This_compiler_follows_an_irregular_logic_in_struct_member_alignment_and_cannot_be_used_to_compile_tinyObject);
 
-#define MAKE_THIS(type) struct type##_s *thisObject
+#define MAKE_THIS(type) type thisObject
 #define ALLOC_THIS(type) struct type##_s *thisObject = (struct type##_s*)malloc(sizeof(struct type##_s))
 #define this thisObject
 
-#define MAKE_CLASS(type) \
+#define MAKE_TYPEDEF(type) \
 	typedef struct type##_s val_##type, *type; \
+
+#define MAKE_CLASS(type) \
 	struct type##_s { CLASS_##type }; \
 	void delete##type (struct type##_s *thisObject)
+
+#define MAKE_CLASS_TYPEDEFED(type) \
+	MAKE_TYPEDEF(type); \
+	MAKE_CLASS(type);
 
 #define MAKE_DEFAULT_CONSTRUCTOR_PROTOTYPES(type) \
 	struct type##_s *new##type(); \
@@ -66,13 +72,15 @@ STATIC_ASSERT(offsetof(struct _ASSERTION_TEST_STRUCT, b) == offsetof(struct _ASS
 
 #define MAKE_DEFAULT_DESTRUCTOR(type) void delete##type(struct type##_s *thisObject){ free(thisObject); }
 
+#define MAKE_DEFAULT_DESTRUCTOR_PROTOTYPE(type) void delete##type(struct type##_s *thisObject);
+
 #define SELFREF_INIT void *currThis
-#define $(object) (((currThis = (void*)object), object)
+#define $(object) (((currThis = (void*)(object)), object)
 #define _(object) ((object)
 
 #define CURR_THIS(type) (struct type##_s*)currThis
 #define MAKE_METHOD_ALIAS(type, method) , type##_##method )
-#define MAKE_VIRTUAL_METHOD_ALIAS(type, method) ->method )
+#define MAKE_VIRTUAL_METHOD_ALIAS(method) ->method )
 
 
 
@@ -135,6 +143,20 @@ typedef struct _event Event;
 
 
 
+MAKE_TYPEDEF(Object);
+MAKE_TYPEDEF(EventArgs);
+MAKE_TYPEDEF(MouseEventArgs);
+MAKE_TYPEDEF(GUIObject);
+MAKE_TYPEDEF(Window);
+MAKE_TYPEDEF(Control);
+MAKE_TYPEDEF(Button);
+MAKE_TYPEDEF(TextBox);
+MAKE_TYPEDEF(Label);
+MAKE_TYPEDEF(Pen);
+MAKE_TYPEDEF(Brush);
+
+
+
 /* Class Object */
 #define CLASS_Object \
 	FIELD(enum _objectType, type, OBJECT); \
@@ -144,24 +166,30 @@ typedef struct _event Event;
 
 
 /* Class EventArgs */
-#define CLASS_EventArgs /* inherits from */ CLASS_Object \	DEF_FIELD(UINT, message); \
+#define CLASS_EventArgs /* inherits from */ CLASS_Object \
+	DEF_FIELD(UINT, message); \
 	DEF_FIELD(WPARAM, wParam); \
 	DEF_FIELD(LPARAM, lParam); \
 	DEF_FIELD(void, (*updateValue)(MAKE_THIS(EventArgs), UINT message, WPARAM wParam, LPARAM lParam));
 
 
 /* Class MouseEventArgs */
-#define CLASS_MouseEventArgs /* inherits from */ CLASS_EventArgs \	FIELD(int, cursorX, NULL); \
+#define CLASS_MouseEventArgs /* inherits from */ CLASS_EventArgs \
+	FIELD(int, cursorX, NULL); \
 	FIELD(int, cursorY, NULL);
 
 
 /* Class GUIObject */
-#define CLASS_GUIObject /* inherits from */ CLASS_Object \	FIELD(LONG_PTR, origProcPtr, NULL); /* The pointer to the original window procedure */  \
+#define CLASS_GUIObject /* inherits from */ CLASS_Object \
+	FIELD(LONG_PTR, origProcPtr, NULL); /* The pointer to the original window procedure */  \
 	\
 	FIELD(HWND, handle, NULL); /* The handle to the window/control; initialized with a call to CreateWindowEx */  \
 	FIELD(HINSTANCE, moduleInstance, NULL); /* The current module instance */  \
 	DEF_FIELD(PAINTSTRUCT, paintData); \
 	FIELD(HDC, paintContext, NULL); \
+	FIELD(HDC, offscreenPaintContext, NULL); \
+	FIELD(HBITMAP, offscreenBitmap, NULL); \
+	FIELD(BOOL, customEraseBG, FALSE); \
 	\
 	FIELD(char*, className, NULL); /* The name of the window/control's WinAPI "class" */  \
 	FIELD(HMENU, ID, 0); /* The child-window/control identifier */  \
@@ -207,7 +235,7 @@ typedef struct _event Event;
 	/* Removes a child object from a GUIObject */
 	METHOD(GUIObject, BOOL, removeChild, (MAKE_THIS(GUIObject), struct GUIObject_s *child));
 	/* Sets an event for a GUIObject by a Windows message */
-	METHOD(GUIObject, int, setEvent, (MAKE_THIS(GUIObject), DWORD message, void(*callback)(struct GUIObject_s*, void*, struct EventArgs_s*),
+	METHOD(GUIObject, int, setEvent, (MAKE_THIS(GUIObject), DWORD message, void(*callback)(GUIObject, void*, struct EventArgs_s*),
 						 void *context, enum _syncMode mode));
 	/* Sets a condition for an event of a GUIObject */
 	METHOD(GUIObject, BOOL, setEventCondition, (MAKE_THIS(GUIObject), int eventID, BOOL *condition));
@@ -216,7 +244,7 @@ typedef struct _event Event;
 	/* Changes an event's enabled state for a GUIObject */
 	METHOD(GUIObject, BOOL, setEventEnabled, (MAKE_THIS(GUIObject), int eventID, BOOL enabled));
 	/* Sets a WM_LBUTTONUP event for an (enabled) object */
-	METHOD(GUIObject, int, setOnClick, (MAKE_THIS(GUIObject), void(*callback)(struct GUIObject_s*, void*, struct EventArgs_s*), void *context,
+	METHOD(GUIObject, int, setOnClick, (MAKE_THIS(GUIObject), void(*callback)(GUIObject, void*, struct EventArgs_s*), void *context,
 											enum _syncMode mode));
 	/* Resizes a GUIObject to a new size specified by width and height */
 	METHOD(GUIObject, BOOL, setSize, (MAKE_THIS(GUIObject), int width, int height));
@@ -229,21 +257,24 @@ typedef struct _event Event;
 	/* Sets a GUIObject's enabled state */
 	METHOD(GUIObject, BOOL, setEnabled, (MAKE_THIS(GUIObject), BOOL enabled));
 	/* Draws a line in a GUIObject from the point specified by x1, y1 to the point specified by x2, y2 */
-	METHOD(GUIObject, BOOL, drawLine, (MAKE_THIS(GUIObject), struct Pen_s *pen, int x1, int y1, int x2, int y2));
+	METHOD(GUIObject, BOOL, drawLine, (MAKE_THIS(GUIObject), Pen pen, int x1, int y1, int x2, int y2));
 	/* Draws an arc in a GUIObject */
-	METHOD(GUIObject, BOOL, drawArc, (MAKE_THIS(GUIObject), struct Pen_s *pen, int boundX1, int boundY1, int boundX2, int boundY2, 
+	METHOD(GUIObject, BOOL, drawArc, (MAKE_THIS(GUIObject), Pen pen, int boundX1, int boundY1, int boundX2, int boundY2, 
 											int x1, int y1, int x2, int y2));
 	/* Draws a rectangle in a GUIObject */
-	METHOD(GUIObject, BOOL, drawRect, (MAKE_THIS(GUIObject), struct Pen_s *pen, struct Brush_s *brush, int boundX1, int boundY1, 
+	METHOD(GUIObject, BOOL, drawRect, (MAKE_THIS(GUIObject), Pen pen, Brush brush, int boundX1, int boundY1, 
 											int boundX2, int boundY2));
 	/* Draws a rounded rectangle in a GUIObject */
-	METHOD(GUIObject, BOOL, drawRoundedRect, (MAKE_THIS(GUIObject), struct Pen_s *pen, struct Brush_s *brush, int boundX1, int boundY1, 
+	METHOD(GUIObject, BOOL, drawRoundedRect, (MAKE_THIS(GUIObject), Pen pen, Brush brush, int boundX1, int boundY1, 
 												int boundX2, int boundY2, int ellipseWidth, int ellipseHeight));
 	/* Draws an ellipse in a GUIObject */
-	METHOD(GUIObject, BOOL, drawEllipse, (MAKE_THIS(GUIObject), struct Pen_s *pen, struct Brush_s *brush, int boundX1, int boundY1, 
+	METHOD(GUIObject, BOOL, drawEllipse, (MAKE_THIS(GUIObject), Pen pen, Brush brush, int boundX1, int boundY1, 
 												int boundX2, int boundY2));
 	/* Draws a polygon in a GUIObject */
-	METHOD(GUIObject, BOOL, drawPolygon, (MAKE_THIS(GUIObject), struct Pen_s *pen, struct Brush_s *brush, int numPoints, LONG *coords));
+	METHOD(GUIObject, BOOL, drawPolygon, (MAKE_THIS(GUIObject), Pen pen, Brush brush, int numPoints, LONG *coords));
+
+	/* Virtual method prototype */
+	BOOL GUIObject_setPos(GUIObject object, int x, int y);
 
 	/* Self-reference mechanism for methods */
 	/* Moves a GUIObject to a new location specified by x and y */
@@ -293,7 +324,8 @@ typedef struct _event Event;
 
 
 /* Class Window */
-#define CLASS_Window /* inherits from */ CLASS_GUIObject \	/* fields */ \
+#define CLASS_Window /* inherits from */ CLASS_GUIObject \
+	/* fields */ \
 	FIELD(int, clientWidth, 0); \
 	FIELD(int, clientHeight, 0); \
 	\
@@ -311,7 +343,8 @@ typedef struct _event Event;
 
 
 /* Class Control */
-#define CLASS_Control /* inherits from */ CLASS_GUIObject \	/* fields */ \
+#define CLASS_Control /* inherits from */ CLASS_GUIObject \
+	/* fields */ \
 	FIELD(int, minX, INT_MIN); \
 	FIELD(int, minY, INT_MIN); \
 	\
@@ -337,7 +370,8 @@ typedef struct _event Event;
 
 
 /* Class TextBox */
-#define CLASS_TextBox /* inherits from */ CLASS_Control \	FIELD(BOOL, multiline, FALSE); \
+#define CLASS_TextBox /* inherits from */ CLASS_Control \
+	FIELD(BOOL, multiline, FALSE); \
 	FIELD(BOOL, numOnly, FALSE);
 
 	METHOD(TextBox, BOOL, setNumOnly, (MAKE_THIS(TextBox), BOOL numOnly));
@@ -352,18 +386,28 @@ typedef struct _event Event;
 
 
 /* Class Pen */
-#define CLASS_Pen /* inherits from */ CLASS_Object \	FIELD(HPEN, handle, NULL); \
+#define CLASS_Pen /* inherits from */ CLASS_Object \
+	FIELD(HPEN, handle, NULL); \
 	FIELD(int, penStyle, 0); \
 	FIELD(int, width, 0); \
 	FIELD(COLORREF, color, 0);
 
+	#define _setPenStyle(penStyle) , initPen(CURR_THIS(Pen), penStyle, (CURR_THIS(Pen))->width, (CURR_THIS(Pen))->color))
+	#define _setPenWidth(width) , initPen(CURR_THIS(Pen), (CURR_THIS(Pen))->penStyle, width, (CURR_THIS(Pen))->color))
+	#define _setPenColor(color) , initPen(CURR_THIS(Pen), (CURR_THIS(Pen))->penStyle, (CURR_THIS(Pen))->width, color))
+
 
 
 /* Class Brush */
-#define CLASS_Brush /* inherits from */ CLASS_Object \	FIELD(HBRUSH, handle, NULL); \
+#define CLASS_Brush /* inherits from */ CLASS_Object \
+	FIELD(HBRUSH, handle, NULL); \
 	FIELD(UINT, brushStyle, 0); \
 	FIELD(COLORREF, color, 0); \
 	FIELD(ULONG_PTR, hatch, NULL);
+
+	#define _setBrushStyle(brushStyle) , initBrush(CURR_THIS(Brush), brushStyle, (CURR_THIS(Pen))->color, (CURR_THIS(Brush))->hatch))
+	#define _setBrushColor(color) , initBrush(CURR_THIS(Brush), (CURR_THIS(Brush))->brushStyle, color, (CURR_THIS(Brush))->hatch))
+	#define _setBrushHatch(hatch) , initBrush(CURR_THIS(Brush), (CURR_THIS(Brush))->brushStyle, (CURR_THIS(Brush))->color, hatch))
 
 
 
@@ -444,6 +488,10 @@ typedef void(*Callback)(GUIObject, void*, EventArgs);
 /* "static" function prototypes */
 static void *getCurrentThis();
 void setCurrentThis(void *self);
+
+void freeGUIObjectFields(GUIObject object);
+
+void flushMessageQueue();
 
 BOOL displayControl(Control control);
 BOOL displayWindow(Window mainWindow, int nCmdShow);

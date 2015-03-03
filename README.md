@@ -14,7 +14,7 @@ To use tinyGUI, just add tinyGUI.h and tinyGUI.c to your project,
 and start coding!
 
 tinyGUI is currently a work-in-progress, it is still missing many widgets and functionality that should make work easier.
-A demonstration of some of its current capabilities can be found in demo.c. Stay tuned!
+A demonstration of some of its current capabilities can be found in demo.c (a small educational application for children) and in the 2048 folder (a minimalist implementation of the infamous 2048 game). Stay tuned!
 
 P.S. This is the first project I've ever hosted at GitHub, sorry if I've messed up somehow!
 
@@ -142,6 +142,10 @@ HWND handle; /* The handle to the window/control; initialized with a call to Cre
 HINSTANCE moduleInstance; /* The current module instance */ 
 PAINTSTRUCT paintData; /* A structure with data about the GUIObject's painting */
 HDC paintContext; /* A handle to the window's current paint context. Initialized internally on receiving a WM_PAINT message */
+HDC offscreenPaintContext; /* A handle to the window's offscreen paint context. Used in double-buffering drawing optimizations */
+HBITMAP offscreenBitmap; /* A handle to the window's offscreen bitmap instance. Used in double-buffering drawing optimizations */
+BOOL customEraseBG; /* If this is TRUE, default processing for the WM_ERASEBKGND doesn't occur so custom processing in an event handler
+    can be used. Useful for preventing flickering. */
 
 char *className; /* The name of the window/control's WinAPI "class" */ 
 HMENU ID; /* The child-window/control identifier */ 
@@ -242,34 +246,35 @@ BOOL setText(char *text);
 BOOL setEnabled(BOOL enabled);
 
 /* Draws a line in a GUIObject from the point specified by x1, y1 to the point specified by x2, y2 with a pen specified by the 
-   parameter pen */
+   parameter pen. If pen is NULL, a null pen is used. Drawing is double-buffered */
 BOOL drawLine(Pen pen, int x1, int y1, int x2, int y2);
 
 /* Draws an arc in a GUIObject inside the bounds of a rectangle specified by boundX1, boundY1, boundX2, and boundY2
    (the upper left and the bottom right corners of the rectangle, respectively), from a point specified by x1 and y1 to
-   the point specified by x2, y2 with a pen specified by the parameter pen */
+   the point specified by x2, y2 with a pen specified by the parameter pen. If pen is NULL, a null pen is used. 
+   Drawing is double-buffered */
 BOOL drawArc(Pen pen, int boundX1, int boundY1, int boundX2, int boundY2, int x1, int y1, int x2, int y2);
 
 /* Draws a rectangle in a GUIObject specified by boundX1, boundY1, boundX2, and boundY2 (the upper left and the bottom right corners of the 
-   rectangle, respectively) with a pen specified by the parameter pen and fills it with the brush specified by the parameter brush. 
-   If it is NULL, a hollow brush is used */
+   rectangle, respectively) with a pen specified by the parameter pen and fills it with the brush specified by the parameter brush. If pen is NULL, a null pen is used. If brush is NULL, a hollow brush is used. Drawing is double-buffered */
 BOOL drawRect(Pen pen, Brush brush, int boundX1, int boundY1, int boundX2, int boundY2);
 
 /* Draws a rounded rectangle in a GUIObject specified by boundX1, boundY1, boundX2, and boundY2 (the upper left and the bottom right 
-   corners of the rectangle, respectively) with an ellipse of width ellipseWidth and height ellipseHeight being used 
-   to draw the rounded edges, with a pen specified by the parameter pen, and fills it with the brush specified by the parameter brush. 
-   If it is NULL, a hollow brush is used */
+   corners of the rectangle, respectively) with an ellipse of width ellipseWidth and height ellipseHeight being used to draw the 
+   rounded edges, with a pen specified by the parameter pen, and fills it with the brush specified by the parameter brush. If pen is NULL, a null pen is used. If brush is NULL, a hollow brush is used. Drawing is double-buffered */
 BOOL drawRoundedRect(Pen pen, Brush brush, int boundX1, int boundY1, 
 							int boundX2, int boundY2, int ellipseWidth, int ellipseHeight);
 
 /* Draws an ellipse in a GUIObject inside the bounds of a rectangle specified by boundX1, boundY1, boundX2, and boundY2 
    (the upper left and the bottom right corners of the rectangle, respectively) with a pen specified by the parameter pen 
-   and fills it with the brush specified by the parameter brush. If it is NULL, a hollow brush is used */
+   and fills it with the brush specified by the parameter brush. If pen is NULL, a null pen is used. If brush is NULL, 
+   a hollow brush is used. Drawing is double-buffered */
 BOOL drawEllipse(Pen pen, Brush brush, int boundX1, int boundY1, int boundX2, int boundY2);
 
 /* Draws a polygon in a GUIObject between a set of points (number given by numPoints) specified by the coords array, which should 
    contain the points in the format {x1, y1, x2, y2, x3, y3, ... xn, yn}, with a pen specified by the parameter pen 
-   and fills it with the brush specified by the parameter brush. If it is NULL, a hollow brush is used */
+   and fills it with the brush specified by the parameter brush. If pen is NULL, a null pen is used. If brush is NULL, 
+   a hollow brush is used. Drawing is double-buffered */
 BOOL drawPolygon(Pen pen, Brush brush, int numPoints, LONG *coords);
 ```
 
@@ -483,11 +488,47 @@ Brush newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch);
 #Static functions
 
 ```C
+/* Free the fields of a GUIObject */
+void freeGUIObjectFields(GUIObject object);
+
+/* Flush the current thread's message queue */
+void flushMessageQueue();
+
 /* Display a window with the application's command line settings */
 BOOL displayWindow(Window mainWindow, int nCmdShow);
 
 /* Display a control on its parent window */
 BOOL displayControl(Control control);
+```
+
+#Other
+
+```C
+/* An event object */
+struct _event {
+  void (*eventFunction)(GUIObject, void*, EventArgs); /* The callback */
+  enum _syncMode mode; /* The sync mode */
+  UINT message; /* The message ID */
+  GUIObject sender; /* The sender object */
+  void *context; /* A pointer to data that gets sent on every event */
+  EventArgs args; /* The event args */
+  BOOL *condition; /* A pointer to a variable that determines if the event should be handled */
+  BOOL interrupt; /* If this is set to TRUE, the default handling for the event doesn't occur */
+  BOOL enabled; /* The event's enabled status */
+};
+
+/* An event handler callback type */
+typedef void(*Callback)(GUIObject, void*, EventArgs);
+
+/* Macros that expand to initPen (first 3) or initBrush (last 3) on a Pen or Brush object respectively with all parameters
+   except for one being same as properties of the object */
+_setPenStyle(penStyle)
+_setPenWidth(width)
+_setPenColor(color)
+_setBrushStyle(brushStyle)
+_setBrushColor(color)
+_setBrushHatch(hatch)
+
 ```
 
 
