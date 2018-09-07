@@ -1,5 +1,4 @@
-tinyGUI
-=======
+# tinyGUI
 
 A small and easy-to-use object-oriented Windows GUI library for C
 
@@ -18,7 +17,7 @@ A demonstration of some of its current capabilities can be found in demo.c (a sm
 
 P.S. This is the first project I've ever hosted at GitHub, sorry if I've messed up somehow!
 
-#Object - oriented system
+# Object - oriented system
 
 tinyGUI uses a custom object-oriented system called tinyObject, designed to create objects that are as easy to use 
 as to extend.
@@ -29,7 +28,7 @@ Check out [tinyObject's GitHub page](https://github.com/Mints97/tinyObject) for 
 
 
 
-#Library structure
+# Library structure
 
 tinyGUI has, so far, the following class inheritance hierarchy:
 
@@ -48,13 +47,13 @@ tinyGUI has, so far, the following class inheritance hierarchy:
 A description of every class follows.
 
 
-#Class Object
+## Class Object
 
 Inheritance: base class
 
 The main base class in tinyGUI, all the other classes directly or indirectly inherit from it.
 
-###Fields
+### Fields
 
 ```C
 enum _objectType type; /* Identifies the object type */
@@ -68,19 +67,19 @@ startSync(object)
 endSync(object)
 ```
 
-###Constructors
+### Constructors
 
 These are all default.
 
 
-#Class EventArgs
+## Class EventArgs
 
 Inheritance: base class, inherits from Object
 
 Instances of this type are passed to event handler callbacks. They contain information about the Windows message
 that triggered the event, along with the additional Windows parameters.
 
-###Fields
+### Fields
 
 ```C
 UINT message; /* The Windows message */
@@ -88,7 +87,7 @@ WPARAM wParam; /* The first Windows message additional parameter */
 LPARAM lParam; /* The second Windows message additional parameter */
 ```
 
-###Methods
+### Methods
 
 ```C
 /* Virtual method. Updates the field values of the object corresponding to the parameters. Actually points to the class initializer
@@ -96,7 +95,7 @@ of it type */
 void updateValue(UINT message, WPARAM wParam, LPARAM lParam);
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* Both constructors set the field values of the object corresponding to their parameters */
@@ -105,7 +104,7 @@ EventArgs newEventArgs(UINT message, WPARAM wParam, LPARAM lParam);
 ```
 
 
-#Class MouseEventArgs
+## Class MouseEventArgs
 
 Inheritance: inherits from EventArgs
 
@@ -118,7 +117,7 @@ int cursorX; /* The X position of the cursor at the time the message was sent */
 int cursorY; /* The Y position of the cursor at the time the message was sent */
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* Both constructors set the field values of the object corresponding to their parameters */
@@ -127,13 +126,13 @@ MouseEventArgs newMouseEventArgs(UINT message, WPARAM wParam, LPARAM lParam);
 ```
 
 
-#Class GUIObject
+## Class GUIObject
 
 Inheritance: base class, inherits from Object
 
 This is the main widget type; all the widgets directly or indirectly inherit from it.
 
-###Fields
+### Fields
 
 ```C
 LONG_PTR origProcPtr; /* The pointer to the original window procedure */ 
@@ -178,7 +177,7 @@ int realY; /*  used in anchor calculations. Not affected by min and max settings
 BOOL enabled; /* The GUIObject's enabled state */
 ```
 
-###Methods
+### Methods
 
 *Note: From here on, all BOOL methods return TRUE on success and FALSE on failure. I plan to replace this in the 
 future with an error-handling mechanism.*
@@ -278,7 +277,7 @@ BOOL drawEllipse(Pen pen, Brush brush, int boundX1, int boundY1, int boundX2, in
 BOOL drawPolygon(Pen pen, Brush brush, int numPoints, LONG *coords);
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -289,13 +288,13 @@ GUIObject newGUIObject(HINSTANCE instance, char *text, int width, int height);
 
 
 
-#Class Window
+## Class Window
 
 Inheritance: inherits from GUIObject
 
 This class represents a window.
 
-###Fields
+### Fields
 
 ```C
 int clientWidth; /* The client area's width, in pixels */
@@ -305,7 +304,7 @@ BOOL resizable; /* The window's resizable state */
 BOOL maximizeEnabled; /* The window's maximize box state */
 ```
 
-###Methods
+### Methods
 
 ```C
 /* Changes a window's resizable style */
@@ -315,7 +314,7 @@ BOOL setResizable(BOOL resizable);
 BOOL enableMaximize(BOOL maximize);
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -325,13 +324,13 @@ Window newWindow(HINSTANCE instance, char *text, int width, int height);
 ```
 
 
-#Class Control
+## Class Control
 
 Inheritance: base class, inherits from GUIObject
 
 This is the base class for all controls.
 
-###Fields
+### Fields
 
 ```C
 int minX; /* The minimum x position of the control (distance from parent's left edge), pixels */
@@ -348,7 +347,7 @@ short anchor; /* The anchor settings for the control. It can be a bitwise additi
 				  (horizontal or vertical) are specified, the control is anchored to the center of its parent in this orientation. */
 ```
 
-###Methods
+### Methods
 
 ```C
 /* Sets a control's minimum position to a new value specified by minX and minY */
@@ -358,7 +357,7 @@ BOOL setMinPos(int minX, int minY);
 BOOL setMaxPos(int maxX, int maxY);
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -370,13 +369,13 @@ Control newControl(HINSTANCE instance, char *text, int x, int y, int width, int 
 
 
 
-#Class Button
+## Class Button
 
 Inheritance: inherits from Control
 
 This class represents a button.
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -386,27 +385,27 @@ void initButton(Button thisObject, HINSTANCE instance, char *text, int x, int y,
 Button newButton(HINSTANCE instance, char *text, int x, int y, int width, int height);
 ```
 
-#Class TextBox
+## Class TextBox
 
 Inheritance: inherits from Control
 
 This class represents a textbox (text input field).
 
-###Fields
+### Fields
 
 ```C
 BOOL multiline; /* The textbox's multiline style */
 BOOL numOnly; /* The textbox's number only style - if it accepts only numbers or not */
 ```
 
-###Methods
+### Methods
 
 ```C
 /* Sets the text input mode for a textbox to number-only or to not number-only */
 BOOL setNumOnly(BOOL numOnly);
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -417,13 +416,13 @@ void initTextBox(TextBox thisObject, HINSTANCE instance, char *text, int x, int 
 TextBox newTextBox(HINSTANCE instance, char *text, int x, int y, int width, int height, enum _textboxtype multiline);
 ```
 
-#Class Label
+## Class Label
 
 Inheritance: inherits from Control
 
 This class represents a label (static text field).
 
-###Constructors
+### Constructors
 
 ```C
 /* The parameter instance is the module instance of your executable, it can be obtained from the
@@ -434,7 +433,7 @@ Label newLabel(HINSTANCE instance, char *text, int x, int y, int width, int heig
 ```
 
 
-#Class Pen
+## Class Pen
 
 Inheritance: inherits from Object
 
@@ -449,7 +448,7 @@ int width; /* The pen's width/thickness */
 COLORREF *color; /* The pen's color in RGB (can be defined with the RGB(r, g, b) WinAPI macro) */
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* Sets the field values to the values of the respective parameters */
@@ -459,13 +458,13 @@ Pen newPen(int penStyle, int width, COLORREF color);
 ```
 
 
-#Class Brush
+## Class Brush
 
 Inheritance: inherits from Object
 
 This class represents a logical brush that can be used to fill areas.
 
-###Fields
+### Fields
 
 ```C
 HBRUSH *handle; /* The brush's handle */
@@ -474,7 +473,7 @@ COLORREF *color; /* The brush's color in RGB (can be defined with the RGB(r, g, 
 ULONG_PTR *hatch; /* Either a predefined macro value of a WinAPI hatch style, or a handle to a bitmap with a pattern */
 ```
 
-###Constructors
+### Constructors
 
 ```C
 /* Sets the field values to the values of the respective parameters */
@@ -485,7 +484,7 @@ Brush newBrush(UINT brushStyle, COLORREF color, ULONG_PTR hatch);
 
 
 
-#Static functions
+## Static functions
 
 ```C
 /* Free the fields of a GUIObject */
@@ -501,7 +500,7 @@ BOOL displayWindow(Window mainWindow, int nCmdShow);
 BOOL displayControl(Control control);
 ```
 
-#Other
+## Other
 
 ```C
 /* An event object */
@@ -532,4 +531,4 @@ _setBrushHatch(hatch)
 ```
 
 
-That is all so far! Please send useful comments and constructive criticism to max.mints (at) mail.ru
+That is all so far!
