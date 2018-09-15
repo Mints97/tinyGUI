@@ -110,7 +110,7 @@ Inheritance: inherits from EventArgs
 
 Instances of this type are passed to event handler callbacks when a mouse message is recieved.
 
-###Fields
+### Fields
 
 ```C
 int cursorX; /* The X position of the cursor at the time the message was sent */
@@ -439,7 +439,7 @@ Inheritance: inherits from Object
 
 This class represents a logical pen that can be used to draw lines.
 
-###Fields
+### Fields
 
 ```C
 HPEN handle; /* The pen's handle */
